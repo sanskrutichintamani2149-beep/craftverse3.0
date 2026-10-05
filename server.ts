@@ -9,6 +9,42 @@ import { maskSensitiveFinancialIdentifiers } from './src/utils/calculators';
 
 dotenv.config();
 
+// Also load .env.local if present (useful in GitHub Codespaces and local dev)
+const envLocalPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  dotenv.config({ path: envLocalPath, override: true });
+}
+
+/**
+ * Universal Gemini API key resolver
+ * Supports GEMINI_API_KEY, GOOGLE_API_KEY, and VITE_GEMINI_API_KEY across process.env, .env, and .env.local.
+ * Strips accidental wrapping quotes and whitespace.
+ */
+function getGeminiApiKey(): string | null {
+  const candidates = [
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
+  ];
+
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const clean = String(raw).trim().replace(/^["']|["']$/g, '').trim();
+    if (
+      clean &&
+      clean !== 'MY_GEMINI_API_KEY' &&
+      clean !== 'your_api_key_here' &&
+      clean !== 'YOUR_GEMINI_API_KEY' &&
+      clean !== 'your_actual_gemini_api_key_here' &&
+      clean !== '""' &&
+      clean !== "''"
+    ) {
+      return clean;
+    }
+  }
+  return null;
+}
+
 export interface UserRecord {
   id: string;
   fullName: string;
@@ -560,8 +596,8 @@ async function startServer() {
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
       res.status(503).json({ error: 'MISSING_API_KEY' });
       return;
     }
@@ -732,8 +768,8 @@ Formatting & Visuals:
       ? language
       : 'English';
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
       res.status(503).json({ error: 'MISSING_API_KEY' });
       return;
     }
@@ -970,8 +1006,8 @@ Honesty & Accuracy Rules:
       ? language
       : 'English';
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
       res.status(503).json({ error: 'MISSING_API_KEY' });
       return;
     }
