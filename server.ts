@@ -549,7 +549,7 @@ async function startServer() {
   });
 
   // POST /api/mentor/chat - Server-Side Gemini AI Financial Mentor
-  const GEMINI_MENTOR_MODEL = 'gemini-3-flash-preview';
+  const GEMINI_PRIMARY_MODEL = 'gemini-3.8-flash';
   const GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 
   app.post('/api/mentor/chat', async (req: Request, res: Response) => {
@@ -580,6 +580,8 @@ async function startServer() {
       const annualCtc = Number(userContext?.annualCtc || 0);
       const monthlyExpenses = Number(userContext?.monthlyExpenses || 0);
       const currentSavings = Number(userContext?.currentSavings || 0);
+      const monthlyInvestments = Number(userContext?.monthlyInvestments || 0);
+      const riskAppetite = userContext?.riskAppetite || 'Balanced';
 
       // Same tax & in-hand formula as src/config/financialData.ts
       const newTaxable = Math.max(0, annualCtc - 75000);
@@ -626,29 +628,30 @@ async function startServer() {
 
       const selectedLanguage = userContext?.preferredLanguage || 'English';
 
-      const systemInstruction = `You are DhanaDrishti's AI Mentor, a friendly financial-literacy guide for Indian users. Explain concepts simply with short examples in ₹. Do not give personalised buy/sell advice, do not promise returns, and remind users to consult a SEBI-registered advisor for personal investment decisions. Keep answers clear and concise.
-Always reply in ${selectedLanguage} (unless the user explicitly asks you to switch languages in their prompt).
+      const systemInstruction = `You are DhanDrishti's AI financial mentor, a friendly financial-literacy guide for Indian users. You are given the user's Executive Dashboard/profile data as JSON, followed by their question. Base your answer on that user's real numbers and situation. Check affordability, cash flow, existing investments, goals, time horizon and risk profile before answering. Explain in simple ${selectedLanguage} with short sentences and practical examples in ₹.
+When projecting returns, state your assumptions and clearly note that they are estimates, not guaranteed returns. If important profile data needed for a good answer is missing, state what is missing instead of guessing or inventing numbers.
+Never reveal or ask for sensitive identifiers (e.g. account numbers, card numbers, PAN, Aadhaar, phone, email, addresses). This is educational guidance, not licensed financial advice.
+Always reply in ${selectedLanguage} (unless the user explicitly asks to switch languages in their message).
 
-Saved User Profile & Pre-Calculated App Numbers (DO NOT re-ask for this information, and DO NOT invent or alter these numbers):
+Current User Dashboard Profile Data:
 - Name: ${userContext?.fullName || 'Investor'}
 - Age: ${userContext?.age || 'Not specified'}
 - Location: ${userContext?.location || 'India'}
-- Dream Job / Role: ${userContext?.dreamJob || 'Professional'}
-- Annual CTC: ₹${annualCtc.toLocaleString('en-IN')}
-- Estimated Monthly Take-Home (In-Hand) Salary: ₹${monthlyInHand.toLocaleString('en-IN')}/month (after est. annual EPF/Gratuity of ₹${epfAndGratuity.toLocaleString('en-IN')} and annual Income Tax/TDS of ₹${annualTax.toLocaleString('en-IN')})
-- FY 2025-26 Tax Comparison: New Tax Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Tax Regime Tax (with standard 80C/80D) = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})
-- Monthly Living Expenses: ₹${monthlyExpenses.toLocaleString('en-IN')}/month
-- Monthly Investable Surplus: ₹${monthlySurplus.toLocaleString('en-IN')}/month
-- Suggested Monthly SIP (60% of surplus): ₹${recommendedSip.toLocaleString('en-IN')}/month
-- Current Savings Corpus: ₹${currentSavings.toLocaleString('en-IN')}
-- 6-Month Emergency Fund Target: ₹${emergencyTarget6Mo.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months of surplus to complete)
+- Dream Job / Target: ${userContext?.dreamJob || 'Not specified'}
+- Risk Profile: ${riskAppetite}
+- Annual CTC: ${annualCtc > 0 ? `₹${annualCtc.toLocaleString('en-IN')}` : 'Not provided'}
+- Estimated Monthly In-Hand Salary: ${monthlyInHand > 0 ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : 'Not provided'}
+- Monthly Living Expenses: ${monthlyExpenses > 0 ? `₹${monthlyExpenses.toLocaleString('en-IN')}/month` : 'Not provided'}
+- Monthly Investable Surplus: ${monthlySurplus > 0 ? `₹${monthlySurplus.toLocaleString('en-IN')}/month` : 'Not provided'}
+- Existing Monthly Investments: ${monthlyInvestments > 0 ? `₹${monthlyInvestments.toLocaleString('en-IN')}/month` : '₹0/month'}
+- Suggested Monthly SIP (60% of surplus): ${recommendedSip > 0 ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'Calculated once income/expenses are set'}
+- Current Savings Corpus: ${currentSavings > 0 ? `₹${currentSavings.toLocaleString('en-IN')}` : 'Not provided'}
+- 6-Month Emergency Fund Target: ${emergencyTarget6Mo > 0 ? `₹${emergencyTarget6Mo.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to complete)` : 'Calculated once expenses are set'}
+- Tax Comparison: New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})
 
-Rules:
-1. Answer the user's exact question clearly in plain language with a short real-world Indian example in ₹ (e.g., for GST, TDS, CTC vs take-home, SIP, inflation, etc.).
-2. When the user's profile is relevant to the question (such as CTC vs take-home, tax regime choice, SIP allocation, or emergency fund), reference the exact pre-calculated numbers above instead of inventing numbers.
-3. Never ask the user to provide their CTC, expenses, or savings since you already have them.
-4. If you are unsure about a specific fact or number, state that clearly rather than guessing.
-5. Visually highlight important financial figures, percentages, key amounts (e.g., **₹50,000**, **12%**, **₹12,00,000**), key terms, and warnings in bold markdown so they can be highlighted cleanly in the UI.`;
+Formatting & Visuals:
+- Highlight key figures and percentages in bold (e.g. **₹5,000**, **12% p.a.**, **₹10,00,000**).
+- Keep answers practical, structured, and easy to read.`;
 
       const recentMessages = Array.isArray(history)
         ? history
@@ -666,7 +669,7 @@ Rules:
 
       const generateWithModel = async (modelName: string) => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
         try {
           const result = await ai.models.generateContent({
             model: modelName,
@@ -684,9 +687,9 @@ Rules:
 
       let replyText = '';
       try {
-        replyText = await generateWithModel(GEMINI_MENTOR_MODEL);
+        replyText = await generateWithModel(GEMINI_PRIMARY_MODEL);
       } catch {
-        // Automatic server-side retry / fallback if primary model hits temporary 503 high demand
+        // Automatic server-side fallback if primary model is unavailable
         replyText = await generateWithModel(GEMINI_FALLBACK_MODEL);
       }
 
@@ -695,7 +698,9 @@ Rules:
         return;
       }
 
-      res.json({ reply: replyText });
+      // Safety net: post-processing privacy masking
+      const safeReply = maskSensitiveFinancialIdentifiers(replyText);
+      res.json({ reply: safeReply });
     } catch {
       res.status(503).json({ error: 'MENTOR_TEMPORARILY_UNAVAILABLE' });
     }
@@ -854,13 +859,13 @@ Honesty & Accuracy Rules:
 
       let parsed: MythFactStructuredResult;
       try {
-        parsed = await runCheckWithModel(GEMINI_MENTOR_MODEL);
+        parsed = await runCheckWithModel(GEMINI_PRIMARY_MODEL);
       } catch {
         try {
           parsed = await runCheckWithModel(GEMINI_FALLBACK_MODEL);
         } catch {
           const fallbackResponse = await ai.models.generateContent({
-            model: GEMINI_MENTOR_MODEL,
+            model: GEMINI_PRIMARY_MODEL,
             contents: `${systemInstruction}\n\nEvaluate this statement: "${cleanStatement}"\nRespond ONLY with a valid JSON object containing keys: verdict ("Myth", "Fact", "Partly true / depends", or "Cannot verify"), short_answer, why, what_is_factual, what_depends_on_context, real_world_example, remember_this, common_mistake in ${selectedLang}.`,
           });
           parsed = parseRobustMythFactJson(fallbackResponse.text?.trim() || '');
@@ -983,16 +988,8 @@ Honesty & Accuracy Rules:
 
       const normalizedMime = cleanMime === 'image/jpg' ? 'image/jpeg' : cleanMime;
 
-      const systemInstruction = `You are DhanaDrishti's Financial Document Explainer for Indian users.
-Carefully read the uploaded document image or PDF and explain it in plain, easy-to-understand ${selectedLang}.
-
-Strict Accuracy & Honesty Rules:
-1. Extract ONLY what is actually visible and legible in the uploaded document. Never invent, guess, or assume numbers, salary figures, tax amounts, dates, interest rates, or names that are not visibly present in the document.
-2. In "key_fields", list only the label/value pairs that are genuinely visible in the document (e.g., Gross Salary, Basic Pay, EPF Deduction, TDS, Net Pay, EMI, Interest Rate, Due Date, GSTIN, Invoice Total, Policy Sum Assured). If no specific numerical fields are visible, return an empty array or only the visible labels.
-3. If part of the document is blurry, cut off, or unreadable, explicitly mention that in "summary" rather than guessing.
-4. Translate any financial or legal jargon present in the document into simple ${selectedLang} inside "important_terms_explained".
-5. Highlight fees, penalties, lock-in clauses, due dates, or unusual charges that deserve a second look in "things_to_watch_out_for", and suggest practical clarification questions in "questions_you_may_want_to_ask".
-6. Do not give personalized investment advice or recommend buying/selling any financial product.`;
+      const systemInstruction = `You are a friendly financial document explainer for ordinary people in India. Read the document or text the user gives you and explain everything important in it in very simple ${selectedLang}, using short sentences and everyday words. Explain what the document is, its purpose, what the key numbers and terms mean (balances, amounts, dates, interest rates, charges, fees, tenure, due dates, benefits, risks), and what the user should watch out for or do next.
+Never include sensitive personal information in your answer, such as account numbers, card numbers, Aadhaar, PAN, phone numbers, email addresses, home addresses, customer IDs, or policy holder personal numbers. Refer to them generically, for example 'your account' or 'your policy'. If the input is unreadable, blurry, or is not a financial document, say so politely in the summary and set status accordingly.`;
 
       const docSchema = {
         type: Type.OBJECT,
@@ -1113,7 +1110,7 @@ Rules:
 
       let rawExplanation;
       try {
-        rawExplanation = await runDocExplainWithModel(GEMINI_MENTOR_MODEL);
+        rawExplanation = await runDocExplainWithModel(GEMINI_PRIMARY_MODEL);
       } catch {
         rawExplanation = await runDocExplainWithModel(GEMINI_FALLBACK_MODEL);
       }

@@ -137,7 +137,11 @@ export const ScreenshotProtection: React.FC<{ children: React.ReactNode }> = ({ 
               Screenshots are not allowed on this website.
             </h2>
             <p className="text-sm text-[#B6C4DD] leading-relaxed">
-              {t.screenshotNotice}
+              {language === 'Hindi'
+                ? 'आपकी व्यक्तिगत वित्तीय जानकारी और वेतन डेटा सुरक्षित रखने के लिए स्क्रीनशॉट प्रतिबंधित हैं।'
+                : language === 'Marathi'
+                ? 'आपला वैयक्तिक आर्थिक डेटा आणि पगाराची माहिती सुरक्षित ठेवण्यासाठी स्क्रीनशॉट घेण्यास मनाई आहे.'
+                : 'Your personal financial projections, salary data, and account details are protected for your privacy.'}
             </p>
             <div className="pt-2">
               <button

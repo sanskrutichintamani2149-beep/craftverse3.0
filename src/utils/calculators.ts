@@ -397,21 +397,42 @@ export function calculateCTCToTakeHome(
 
 /**
  * Privacy Masking Utility (ITEM 3)
- * Masks PAN, Aadhaar, Credit/Debit Card, and Bank Account numbers so only the last 4 digits/chars are shown.
+ * Masks PAN, Aadhaar, Credit/Debit Card, Bank Account numbers, Phone numbers, and Email addresses.
  */
 export function maskSensitiveFinancialIdentifiers(input: string): string {
   if (!input) return '';
   let masked = String(input);
+
+  // Mask Email addresses (e.g. user@example.com -> u***@example.com)
+  masked = masked.replace(/\b([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/gi, '$1***@$2');
 
   // Mask Indian PAN numbers (e.g. ABCDE1234F -> XXXXXX234F)
   masked = masked.replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/gi, (match) => {
     return 'XXXXXX' + match.slice(-4).toUpperCase();
   });
 
-  // Mask 12-to-16 digit sequences with spaces/hyphens (Aadhaar / Card / Account numbers)
+  // Mask Indian Phone numbers (e.g. +91 9876543210 or 9876543210 -> +91-XXXXX-3210)
+  masked = masked.replace(/(?:\+91[\s-]?)?[6-9]\d{2}[\s-]?\d{3}[\s-]?\d{4}\b/g, (match) => {
+    const digitsOnly = match.replace(/\D/g, '').slice(-10);
+    return `+91-XXXXX-${digitsOnly.slice(-4)}`;
+  });
+
+  // Mask 12-digit Aadhaar numbers (e.g. 1234 5678 9012 or 1234-5678-9012)
+  masked = masked.replace(/\b\d{4}[ -]\d{4}[ -]\d{4}\b/g, (match) => {
+    const digitsOnly = match.replace(/\D/g, '');
+    return 'XXXX-XXXX-' + digitsOnly.slice(-4);
+  });
+
+  // Mask 16-digit Card numbers (e.g. 1234 5678 9012 3456 or 1234-5678-9012-3456)
+  masked = masked.replace(/\b(?:\d{4}[ -]){3}\d{4}\b/g, (match) => {
+    const digitsOnly = match.replace(/\D/g, '');
+    return 'XXXX-XXXX-XXXX-' + digitsOnly.slice(-4);
+  });
+
+  // Mask 9-to-18 digit Account number sequences with spaces/hyphens
   masked = masked.replace(/\b(?:\d[ -]*?){9,18}\d\b/g, (match) => {
     const digitsOnly = match.replace(/\D/g, '');
-    // Skip normal currency amounts or dates unless it's 10+ digits without a ₹ prefix
+    // Skip normal 1-9 digit figures or currency amounts unless it's 10+ digits
     if (digitsOnly.length < 10) return match;
     return 'X'.repeat(Math.max(4, digitsOnly.length - 4)) + digitsOnly.slice(-4);
   });

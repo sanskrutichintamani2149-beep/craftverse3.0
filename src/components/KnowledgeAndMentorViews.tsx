@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import {
   Search,
   BookOpen,
@@ -39,6 +38,7 @@ import { maskSensitiveFinancialIdentifiers } from '../utils/calculators';
 import { PlannersView } from './DashboardAndSimulators';
 import { TermOPediaTab } from './Navbar';
 import { getTranslation } from '../config/translations';
+import { aiService, DocumentExplanation } from '../utils/aiService';
 
 /**
  * CHANGE 11: AI Response Highlighting
@@ -107,16 +107,6 @@ export function renderHighlightedAIResponse(content: string): React.ReactNode {
       })}
     </div>
   );
-}
-
-interface DocumentExplanation {
-  status?: 'success' | 'unreadable' | 'not_financial_document';
-  document_type: string;
-  summary: string;
-  key_fields: { label: string; value: string }[];
-  important_terms_explained: { term: string; explanation: string }[];
-  things_to_watch_out_for: string[];
-  questions_you_may_want_to_ask: string[];
 }
 
 interface SavedDocumentExplanationItem extends DocumentExplanation {
@@ -425,7 +415,7 @@ export const TermOPediaView: React.FC<{
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t.searchPlaceholder}
+                placeholder={t.searchTermsPlaceholder}
                 className="w-full pl-10 pr-4 py-2 rounded-xl theme-input text-sm"
               />
             </div>
@@ -986,6 +976,8 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [inputMode, setInputMode] = useState<'file' | 'text'>('file');
+  const [pastedText, setPastedText] = useState('');
   const [selectedFile, setSelectedFile] = useState<{
     name: string;
     sizeBytes: number;
@@ -1031,7 +1023,7 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          fileName: selectedFile?.name || docExplanation.document_type || 'Financial Document',
+          fileName: selectedFile?.name || (inputMode === 'text' ? 'Pasted Financial Text' : docExplanation.document_type) || 'Financial Document',
           explanation: docExplanation,
           language,
         }),
@@ -1072,6 +1064,7 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
     setFileError(null);
     setDocExplainError(null);
     setDocExplanation(null);
+    setInputMode('file');
 
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
     const inferredMime =
@@ -1155,62 +1148,45 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
   };
 
   const explainSelectedDocument = async () => {
-    if (!selectedFile || isExplainingDoc) return;
-    setIsExplainingDoc(true);
-    setDocExplainError(null);
-
-    const attemptExplain = async (): Promise<DocumentExplanation> => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-      try {
-        const res = await fetch('/api/document/explain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            fileData: selectedFile.base64Data,
-            mimeType: selectedFile.mimeType,
-            fileName: selectedFile.name,
-            language,
-          }),
-        });
-        if (!res.ok) {
-          throw new Error('Explain request failed');
-        }
-        const data = await res.json();
-        if (!data || !data.explanation || typeof data.explanation.summary !== 'string') {
-          throw new Error('Invalid explanation payload');
-        }
-        return data.explanation as DocumentExplanation;
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
-
-    let result: DocumentExplanation | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        result = await attemptExplain();
-        break;
-      } catch {
-        if (attempt === 0) {
-          await new Promise((r) => setTimeout(r, 700));
-        }
-      }
+    if (isExplainingDoc) return;
+    if (inputMode === 'file' && !selectedFile) return;
+    if (inputMode === 'text' && !pastedText.trim()) {
+      setFileError('Please paste or type some financial text to explain.');
+      return;
     }
 
-    if (result) {
+    setIsExplainingDoc(true);
+    setDocExplainError(null);
+    setFileError(null);
+
+    try {
+      const result = await aiService.explainFinancialDocument(
+        inputMode === 'text'
+          ? {
+              textContent: pastedText.trim(),
+              mimeType: 'text/plain',
+              fileName: 'Pasted Financial Text',
+              language,
+            }
+          : {
+              fileData: selectedFile!.base64Data,
+              mimeType: selectedFile!.mimeType,
+              fileName: selectedFile!.name,
+              language,
+            }
+      );
       setDocExplanation(result);
-    } else {
+    } catch {
       setDocExplainError(
         language === 'Hindi'
           ? 'अभी दस्तावेज़ का विश्लेषण करने में समस्या आ रही है। कृपया पुनः प्रयास करें।'
           : language === 'Marathi'
           ? 'सध्या कागदपत्राचे विश्लेषण करताना अडचण येत आहे. कृपया पुन्हा प्रयत्न करा.'
-          : 'We could not analyze this document right now. Please tap Retry to try again.'
+          : 'We could not analyze this document right now. Please verify your Gemini API key and tap Retry.'
       );
+    } finally {
+      setIsExplainingDoc(false);
     }
-    setIsExplainingDoc(false);
   };
 
   const topics: ('All' | VideoTopic)[] = [
@@ -1241,8 +1217,38 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               Financial Document Explainer
             </h2>
             <p className="text-sm text-[var(--text-secondary)] mt-1">
-              Upload a salary slip, Form 16, bank statement, loan agreement, insurance policy, credit card bill, or GST invoice (PDF, JPG, PNG, WEBP up to 10 MB).
+              Upload a salary slip, Form 16, bank statement, loan agreement, insurance policy, credit card bill, or GST invoice (PDF, JPG, PNG, WEBP up to 10 MB), or paste financial text.
             </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setInputMode('file');
+                setFileError(null);
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                inputMode === 'file'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
+              }`}
+            >
+              Upload Document
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setInputMode('text');
+                setFileError(null);
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                inputMode === 'text'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
+              }`}
+            >
+              Paste Text
+            </button>
           </div>
         </div>
 
@@ -1251,7 +1257,7 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
           <div>
             <strong className="text-emerald-600 dark:text-emerald-400">Privacy & Data Protection: </strong>
-            Your uploaded document is processed in memory only and is never stored on our servers. Sensitive numbers (PAN, Aadhaar, Bank Account, and Card numbers) are automatically masked so only the last 4 digits are shown.
+            Your input is processed in memory for this single request only and is never stored on our servers. Sensitive numbers (PAN, Aadhaar, Bank Account, Phone, Email, and Card numbers) are automatically masked.
           </div>
         </div>
 
@@ -1278,61 +1284,111 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           className="hidden"
         />
 
-        {/* Drag and Drop Upload Area */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            setIsDragging(false);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            setIsDragging(false);
-            handleFileSelection(e.dataTransfer.files?.[0]);
-          }}
-          className={`rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all ${
-            isDragging
-              ? 'border-emerald-500 bg-emerald-500/10'
-              : 'border-[var(--border-strong)] bg-[var(--bg-secondary)]'
-          }`}
-        >
-          <div className="max-w-md mx-auto space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto">
-              <Upload className="w-6 h-6" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-[var(--text-primary)]">
-                Drag and drop your financial document here
-              </p>
-              <p className="text-xs text-[var(--text-muted)]">
-                Supported formats: PDF, JPG, JPEG, PNG, WEBP · Maximum file size: 10 MB
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-              <button
-                type="button"
-                disabled={isExplainingDoc}
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer shadow-sm"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Choose file</span>
-              </button>
-              <button
-                type="button"
-                disabled={isExplainingDoc}
-                onClick={() => cameraInputRef.current?.click()}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] hover:border-emerald-500/50 disabled:opacity-60 text-xs sm:text-sm font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-amber-500" />
-                <span>Use Camera</span>
-              </button>
+        {/* Input Option 1: Drag and Drop Upload Area */}
+        {inputMode === 'file' && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              handleFileSelection(e.dataTransfer.files?.[0]);
+            }}
+            className={`rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all ${
+              isDragging
+                ? 'border-emerald-500 bg-emerald-500/10'
+                : 'border-[var(--border-strong)] bg-[var(--bg-secondary)]'
+            }`}
+          >
+            <div className="max-w-md mx-auto space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto">
+                <Upload className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  Drag and drop your financial document here
+                </p>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Supported formats: PDF, JPG, JPEG, PNG, WEBP · Maximum file size: 10 MB
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={isExplainingDoc}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer shadow-sm"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Choose file</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isExplainingDoc}
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] hover:border-emerald-500/50 disabled:opacity-60 text-xs sm:text-sm font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 text-amber-500" />
+                  <span>Use Camera</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Input Option 2: Pasted Text Area */}
+        {inputMode === 'text' && (
+          <div className="p-4 sm:p-5 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)] space-y-3">
+            <label className="block text-xs font-semibold text-[var(--text-primary)]">
+              Paste Financial Text (SMS alert, bank notice, loan terms, salary details, or invoice text)
+            </label>
+            <textarea
+              rows={5}
+              value={pastedText}
+              onChange={(e) => {
+                setPastedText(e.target.value);
+                setFileError(null);
+              }}
+              placeholder="e.g., Dear customer, your loan EMI of ₹14,500 is due on 05-Nov. Outstanding principal is ₹4,20,000 at 9.5% p.a. Late fee of ₹500 applies after due date..."
+              className="w-full px-4 py-3 rounded-xl theme-input text-xs sm:text-sm focus:outline-none resize-y"
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-[var(--text-muted)]">
+                {pastedText.length} characters
+              </span>
+              <div className="flex items-center gap-2">
+                {pastedText && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPastedText('');
+                      setDocExplanation(null);
+                      setDocExplainError(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={isExplainingDoc || !pastedText.trim()}
+                  onClick={explainSelectedDocument}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer shadow-sm"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>{isExplainingDoc ? 'Explaining...' : 'Explain this text'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Client Validation Error */}
         {fileError && (
@@ -1346,7 +1402,7 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
         )}
 
         {/* Selected File Preview & Action Button */}
-        {selectedFile && (
+        {inputMode === 'file' && selectedFile && (
           <div className="p-4 sm:p-5 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               {selectedFile.previewUrl ? (
@@ -2339,84 +2395,6 @@ export const AIMentorView: React.FC = () => {
     return 'Unable to reach the AI Mentor right now. Please verify the Gemini API key and tap Retry to try again.';
   };
 
-  const callGeminiDirectOrProxy = async (
-    trimmedQuestion: string,
-    conversationHistory: { role: 'user' | 'mentor'; text: string }[]
-  ): Promise<string> => {
-    const clientApiKey =
-      (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
-      (typeof window !== 'undefined'
-        ? (window as unknown as { VITE_GEMINI_API_KEY?: string }).VITE_GEMINI_API_KEY
-        : undefined);
-
-    const systemInstruction = `You are DhanaDrishti's AI Mentor, a friendly financial-literacy guide for Indian users. Explain concepts simply with short examples in ₹. Do not give personalised buy/sell advice, do not promise returns, and remind users to consult a SEBI-registered advisor for personal investment decisions. Keep answers clear and concise.
-Always reply in ${language}.
-When numbers or percentages are mentioned, format them clearly in ₹ (e.g. ₹5,000, 12% p.a., ₹10,00,000).`;
-
-    // 1. Try client-side direct Gemini call if VITE_GEMINI_API_KEY is configured
-    if (clientApiKey && clientApiKey !== 'MY_GEMINI_API_KEY') {
-      try {
-        const ai = new GoogleGenAI({ apiKey: clientApiKey });
-        const contents = [
-          ...conversationHistory.slice(-8).map((m) => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.text }],
-          })),
-          { role: 'user', parts: [{ text: trimmedQuestion }] },
-        ];
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents,
-          config: {
-            systemInstruction,
-          },
-        });
-
-        const reply = response.text?.trim();
-        if (reply) return reply;
-      } catch {
-        // Fallback to server proxy below
-      }
-    }
-
-    // 2. Fallback to server-side proxy route /api/mentor/chat
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
-    try {
-      const res = await fetch('/api/mentor/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          message: trimmedQuestion,
-          history: conversationHistory.slice(-8).map((m) => ({ role: m.role, text: m.text })),
-          userContext: {
-            fullName: user?.fullName,
-            age: user?.age,
-            location: user?.location,
-            dreamJob: user?.dreamJob,
-            annualCtc: user?.annualCtc ?? 1200000,
-            monthlyExpenses: user?.monthlyExpenses ?? 35000,
-            currentSavings: user?.currentSavings ?? 200000,
-            preferredLanguage: language,
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
-      const data = await res.json();
-      if (data && typeof data.reply === 'string' && data.reply.trim()) {
-        return data.reply.trim();
-      }
-      throw new Error('Empty reply');
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  };
-
   const sendQuestion = async (questionText: string, isRetry = false) => {
     const trimmed = questionText.trim();
     if (!trimmed || isLoading) return;
@@ -2433,7 +2411,12 @@ When numbers or percentages are mentioned, format them clearly in ₹ (e.g. ₹5
     setIsLoading(true);
 
     try {
-      const reply = await callGeminiDirectOrProxy(trimmed, updatedHistory.slice(0, -1));
+      const reply = await aiService.askAIMentor({
+        message: trimmed,
+        history: updatedHistory.slice(0, -1),
+        userProfile: user,
+        language,
+      });
       setMessages((prev) => [
         ...prev,
         {
