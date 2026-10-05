@@ -50,14 +50,20 @@ export const aiService = {
   async explainFinancialDocument(req: DocumentExplainRequest): Promise<DocumentExplanation> {
     const attempt = async (): Promise<DocumentExplanation> => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 35000);
+      const timeoutId = setTimeout(() => controller.abort(), 40000);
 
       try {
+        const token = typeof localStorage !== 'undefined' ? localStorage.getItem('dhanadrishti_session_token') : null;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const res = await fetch('/api/document/explain', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           signal: controller.signal,
           body: JSON.stringify({
             fileData: req.fileData || '',
@@ -128,7 +134,7 @@ export const aiService = {
   async askAIMentor(req: MentorChatRequest): Promise<string> {
     const attempt = async (): Promise<string> => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
 
       try {
         // Strip out any personal identifiers like email/phone/account before sending
@@ -149,11 +155,17 @@ export const aiService = {
               preferredLanguage: req.language,
             };
 
+        const token = typeof localStorage !== 'undefined' ? localStorage.getItem('dhanadrishti_session_token') : null;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const res = await fetch('/api/mentor/chat', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           signal: controller.signal,
           body: JSON.stringify({
             message: req.message,

@@ -36,19 +36,33 @@ const AppShell: React.FC = () => {
 
   // Support direct route links: /planner, /video-explainers, /flashcards, /quiz
   useEffect(() => {
-    const pathOrHash = `${window.location.pathname}${window.location.hash}`.toLowerCase();
-    if (pathOrHash.includes('video') || pathOrHash.includes('explainer')) {
-      setCurrentView('explainer');
-    } else if (pathOrHash.includes('planner') || pathOrHash.includes('roadmap')) {
-      setCurrentView('planners');
-    } else if (pathOrHash.includes('flashcard')) {
-      setTermOPediaTab('flashcards');
-      setCurrentView('termopedia');
-    } else if (pathOrHash.includes('quiz')) {
-      setTermOPediaTab('quiz');
-      setCurrentView('termopedia');
-    }
-  }, []);
+    const checkRoute = () => {
+      if (user && !user.profileCompleted) {
+        setCurrentView('profile');
+        return;
+      }
+      const pathOrHash = `${window.location.pathname}${window.location.hash}`.toLowerCase();
+      if (pathOrHash.includes('video') || pathOrHash.includes('explainer')) {
+        setCurrentView('explainer');
+      } else if (pathOrHash.includes('planner') || pathOrHash.includes('roadmap')) {
+        setCurrentView('planners');
+      } else if (pathOrHash.includes('flashcard')) {
+        setTermOPediaTab('flashcards');
+        setCurrentView('termopedia');
+      } else if (pathOrHash.includes('quiz')) {
+        setTermOPediaTab('quiz');
+        setCurrentView('termopedia');
+      }
+    };
+
+    checkRoute();
+    window.addEventListener('popstate', checkRoute);
+    window.addEventListener('hashchange', checkRoute);
+    return () => {
+      window.removeEventListener('popstate', checkRoute);
+      window.removeEventListener('hashchange', checkRoute);
+    };
+  }, [user]);
 
   // CHANGE 8: Redirect to login/auth view upon session logout (including tab-change security logout)
   useEffect(() => {
@@ -62,12 +76,17 @@ const AppShell: React.FC = () => {
     if (loading) return;
 
     if (user) {
-      // Returning user with completed profile goes straight to Dashboard;
-      // newly signed-up user (or incomplete profile) goes to Financial Profile form
-      if (currentView === 'landing' || currentView === 'auth') {
-        setCurrentView(user.profileCompleted ? 'dashboard' : 'profile');
-      } else if (!user.profileCompleted && currentView === 'dashboard') {
-        setCurrentView('profile');
+      // If user profile is not completed, strictly enforce profile screen
+      // and block access to any other feature until questions are submitted
+      if (!user.profileCompleted) {
+        if (currentView !== 'profile') {
+          setCurrentView('profile');
+        }
+      } else {
+        // Returning user with completed profile goes straight to Dashboard
+        if (currentView === 'landing' || currentView === 'auth') {
+          setCurrentView('dashboard');
+        }
       }
     } else {
       // Block protected pages after logout
@@ -79,6 +98,13 @@ const AppShell: React.FC = () => {
 
   const handleNavigate = (targetView: AppView, subTab?: TermOPediaTab) => {
     setMobileMenuOpen(false);
+
+    // If user is logged in but hasn't completed Executive Dashboard questions,
+    // block access to all other features and keep them on the profile questions screen
+    if (user && !user.profileCompleted) {
+      setCurrentView('profile');
+      return;
+    }
 
     // CHANGE 4: Video explainer opens as an item in the left-side area the same way "Myths & Facts" is opened
     if (targetView === 'explainer') {
@@ -106,10 +132,6 @@ const AppShell: React.FC = () => {
 
     if (!user && PROTECTED_VIEWS.includes(targetView)) {
       setCurrentView('auth');
-      return;
-    }
-    if (user && !user.profileCompleted && targetView === 'dashboard') {
-      setCurrentView('profile');
       return;
     }
     setCurrentView(targetView);

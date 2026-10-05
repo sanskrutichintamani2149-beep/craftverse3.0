@@ -17,7 +17,7 @@ if (fs.existsSync(envLocalPath)) {
 
 /**
  * Universal Gemini API key resolver
- * Supports GEMINI_API_KEY, GOOGLE_API_KEY, and VITE_GEMINI_API_KEY across process.env, .env, and .env.local.
+ * Supports GEMINI_API_KEY, GOOGLE_API_KEY, VITE_GEMINI_API_KEY, and API_KEY across process.env, .env, and .env.local.
  * Strips accidental wrapping quotes and whitespace.
  */
 function getGeminiApiKey(): string | null {
@@ -25,6 +25,7 @@ function getGeminiApiKey(): string | null {
     process.env.GEMINI_API_KEY,
     process.env.GOOGLE_API_KEY,
     process.env.VITE_GEMINI_API_KEY,
+    process.env.API_KEY,
   ];
 
   for (const raw of candidates) {
@@ -134,13 +135,20 @@ interface DatabaseSchema {
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'dhanadrishti.db.json');
+const DB_FILE = path.join(DATA_DIR, 'db.json');
+const LEGACY_DB_FILE = path.join(DATA_DIR, 'dhanadrishti.db.json');
 
 function ensureDb(): DatabaseSchema {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  if (!fs.existsSync(DB_FILE)) {
+
+  let targetFile = DB_FILE;
+  if (!fs.existsSync(DB_FILE) && fs.existsSync(LEGACY_DB_FILE)) {
+    targetFile = LEGACY_DB_FILE;
+  }
+
+  if (!fs.existsSync(targetFile)) {
     const initial: DatabaseSchema = {
       users: {},
       sessions: {},
@@ -151,10 +159,12 @@ function ensureDb(): DatabaseSchema {
       quizAttempts: {},
     };
     fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
+    fs.writeFileSync(LEGACY_DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
     return initial;
   }
+
   try {
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
+    const raw = fs.readFileSync(targetFile, 'utf-8');
     const parsed = JSON.parse(raw) as DatabaseSchema;
     if (!parsed.users) parsed.users = {};
     if (!parsed.sessions) parsed.sessions = {};
@@ -163,6 +173,25 @@ function ensureDb(): DatabaseSchema {
     if (!parsed.savedDocumentExplanations) parsed.savedDocumentExplanations = {};
     if (!parsed.flashcardProgress) parsed.flashcardProgress = {};
     if (!parsed.quizAttempts) parsed.quizAttempts = {};
+
+    // Treat existing users who already have their dashboard data filled in as completed
+    for (const u of Object.values(parsed.users)) {
+      if (u.profileCompleted === undefined || u.profileCompleted === null) {
+        u.profileCompleted = Boolean(
+          u.dreamJob &&
+          u.annualCtc !== null &&
+          u.annualCtc > 0 &&
+          u.monthlyExpenses !== null &&
+          u.monthlyExpenses >= 0
+        );
+      }
+    }
+
+    // Ensure db.json exists with the latest loaded contents
+    if (!fs.existsSync(DB_FILE)) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+    }
+
     return parsed;
   } catch {
     return {
@@ -181,13 +210,37 @@ function saveDb(db: DatabaseSchema): void {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  const tempFile = `${DB_FILE}.tmp`;
-  fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
-  fs.renameSync(tempFile, DB_FILE);
+  const content = JSON.stringify(db, null, 2);
+  fs.writeFileSync(DB_FILE, content, 'utf-8');
+  try {
+    fs.writeFileSync(LEGACY_DB_FILE, content, 'utf-8');
+  } catch {
+    // Secondary legacy file update failure is non-fatal
+  }
 }
 
 function hashPassword(password: string, salt: string): string {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+}
+
+function verifyPassword(password: string, salt: string, storedHash: string): boolean {
+  try {
+    const pbkdf2Hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    const pbkdf2Buf = Buffer.from(pbkdf2Hash, 'hex');
+    const storedBuf = Buffer.from(storedHash, 'hex');
+    if (pbkdf2Buf.length === storedBuf.length && crypto.timingSafeEqual(pbkdf2Buf, storedBuf)) {
+      return true;
+    }
+    // Backward compatibility for existing users with legacy scrypt hashes
+    const scryptHash = crypto.scryptSync(password, salt, 64).toString('hex');
+    const scryptBuf = Buffer.from(scryptHash, 'hex');
+    if (scryptBuf.length === storedBuf.length && crypto.timingSafeEqual(scryptBuf, storedBuf)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function sanitizeUser(user: UserRecord) {
@@ -243,6 +296,7 @@ async function startServer() {
       const {
         fullName,
         email,
+        username,
         password,
         age,
         location,
@@ -251,7 +305,7 @@ async function startServer() {
       } = req.body || {};
 
       const cleanName = String(fullName || '').trim();
-      const cleanEmail = String(email || '').trim().toLowerCase();
+      const rawIdentifier = String(email || username || '').trim().toLowerCase();
       const cleanLocation = String(location || '').trim();
       const parsedAge = Number(age);
 
@@ -259,7 +313,7 @@ async function startServer() {
         res.status(400).json({ error: 'Please enter your full name (at least 2 characters).' });
         return;
       }
-      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      if (!rawIdentifier || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawIdentifier)) {
         res.status(400).json({ error: 'Please enter a valid email address.' });
         return;
       }
@@ -281,7 +335,9 @@ async function startServer() {
       const userTheme = theme === 'light' ? 'light' : 'dark';
 
       const db = ensureDb();
-      const existing = Object.values(db.users).find((u) => u.email === cleanEmail);
+      const existing = Object.values(db.users).find(
+        (u) => u.email.toLowerCase() === rawIdentifier || (u as any).username?.toLowerCase() === rawIdentifier
+      );
       if (existing) {
         res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         return;
@@ -295,7 +351,7 @@ async function startServer() {
       const newUser: UserRecord = {
         id,
         fullName: cleanName,
-        email: cleanEmail,
+        email: rawIdentifier,
         passwordHash,
         salt,
         age: Math.round(parsedAge),
@@ -335,25 +391,32 @@ async function startServer() {
   // POST /api/auth/login
   app.post('/api/auth/login', (req: Request, res: Response) => {
     try {
-      const { email, password } = req.body || {};
-      const cleanEmail = String(email || '').trim().toLowerCase();
+      const { email, username, password } = req.body || {};
+      const cleanIdentifier = String(email || username || '').trim().toLowerCase();
 
-      if (!cleanEmail || !password) {
+      if (!cleanIdentifier || !password) {
         res.status(400).json({ error: 'Please enter both email and password.' });
         return;
       }
 
       const db = ensureDb();
-      const user = Object.values(db.users).find((u) => u.email === cleanEmail);
+      const user = Object.values(db.users).find(
+        (u) => u.email.toLowerCase() === cleanIdentifier || (u as any).username?.toLowerCase() === cleanIdentifier
+      );
       if (!user) {
         res.status(401).json({ error: 'Invalid email or password. Please check your credentials or sign up.' });
         return;
       }
 
-      const expectedHash = hashPassword(String(password), user.salt);
-      if (expectedHash !== user.passwordHash) {
+      if (!verifyPassword(String(password), user.salt, user.passwordHash)) {
         res.status(401).json({ error: 'Invalid email or password. Please try again.' });
         return;
+      }
+
+      // Upgrade legacy password hash to PBKDF2 seamlessly if needed
+      const pbkdf2Expected = hashPassword(String(password), user.salt);
+      if (user.passwordHash !== pbkdf2Expected) {
+        user.passwordHash = pbkdf2Expected;
       }
 
       const token = crypto.randomBytes(32).toString('hex');
@@ -372,6 +435,28 @@ async function startServer() {
       console.error('Login error:', err);
       res.status(500).json({ error: 'Unable to sign in right now. Please try again.' });
     }
+  });
+
+  // GET /api/auth/me - session check
+  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const db = ensureDb();
+    const user = db.users[req.userId!];
+    if (!user) {
+      res.status(401).json({ error: 'User account not found. Please log in again.' });
+      return;
+    }
+    res.json({ user: sanitizeUser(user) });
+  });
+
+  // GET /api/auth/session - session verification
+  app.get('/api/auth/session', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const db = ensureDb();
+    const user = db.users[req.userId!];
+    if (!user) {
+      res.status(401).json({ error: 'User account not found. Please log in again.' });
+      return;
+    }
+    res.json({ user: sanitizeUser(user) });
   });
 
   // POST /api/auth/logout
@@ -585,7 +670,7 @@ async function startServer() {
   });
 
   // POST /api/mentor/chat - Server-Side Gemini AI Financial Mentor
-  const GEMINI_PRIMARY_MODEL = 'gemini-3.8-flash';
+  const GEMINI_PRIMARY_MODEL = 'gemini-3.5-flash';
   const GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 
   app.post('/api/mentor/chat', async (req: Request, res: Response) => {
@@ -598,6 +683,7 @@ async function startServer() {
 
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
+      console.warn('[AI Mentor] Request failed: Gemini API key is missing.');
       res.status(503).json({ error: 'MISSING_API_KEY' });
       return;
     }
@@ -605,21 +691,45 @@ async function startServer() {
     try {
       const ai = new GoogleGenAI({
         apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
       });
 
-      // Pre-compute exact user financial numbers using the app's calculation logic
-      const annualCtc = Number(userContext?.annualCtc || 0);
-      const monthlyExpenses = Number(userContext?.monthlyExpenses || 0);
-      const currentSavings = Number(userContext?.currentSavings || 0);
-      const monthlyInvestments = Number(userContext?.monthlyInvestments || 0);
-      const riskAppetite = userContext?.riskAppetite || 'Balanced';
+      // Supplement context with database profile if user is authenticated and fields are missing
+      let resolvedContext = { ...(userContext || {}) };
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.slice('Bearer '.length).trim();
+        const db = ensureDb();
+        const session = db.sessions[token];
+        if (session && session.expiresAt > Date.now() && db.users[session.userId]) {
+          const dbUser = db.users[session.userId];
+          resolvedContext = {
+            fullName: resolvedContext.fullName || dbUser.fullName,
+            age: resolvedContext.age ?? dbUser.age,
+            location: resolvedContext.location || dbUser.location,
+            dreamJob: resolvedContext.dreamJob || dbUser.dreamJob,
+            annualCtc: resolvedContext.annualCtc !== undefined && resolvedContext.annualCtc !== null ? resolvedContext.annualCtc : dbUser.annualCtc,
+            monthlyExpenses: resolvedContext.monthlyExpenses !== undefined && resolvedContext.monthlyExpenses !== null ? resolvedContext.monthlyExpenses : dbUser.monthlyExpenses,
+            currentSavings: resolvedContext.currentSavings !== undefined && resolvedContext.currentSavings !== null ? resolvedContext.currentSavings : dbUser.currentSavings,
+            monthlyInvestments: resolvedContext.monthlyInvestments !== undefined && resolvedContext.monthlyInvestments !== null ? resolvedContext.monthlyInvestments : dbUser.monthlyInvestments,
+            riskAppetite: resolvedContext.riskAppetite || dbUser.riskAppetite,
+            preferredLanguage: resolvedContext.preferredLanguage || dbUser.preferredLanguage,
+          };
+        }
+      }
 
-      // Same tax & in-hand formula as src/config/financialData.ts
+      // Check available vs missing financial figures
+      const hasCtc = typeof resolvedContext.annualCtc === 'number' && resolvedContext.annualCtc > 0;
+      const hasExpenses = typeof resolvedContext.monthlyExpenses === 'number' && resolvedContext.monthlyExpenses >= 0;
+      const hasSavings = typeof resolvedContext.currentSavings === 'number' && resolvedContext.currentSavings >= 0;
+
+      const annualCtc = hasCtc ? Number(resolvedContext.annualCtc) : 0;
+      const monthlyExpenses = hasExpenses ? Number(resolvedContext.monthlyExpenses) : 0;
+      const currentSavings = hasSavings ? Number(resolvedContext.currentSavings) : 0;
+      const monthlyInvestments = Number(resolvedContext.monthlyInvestments || 0);
+      const riskAppetite = resolvedContext.riskAppetite || 'Balanced';
+      const dreamJob = resolvedContext.dreamJob || 'Not specified';
+
+      // Tax calculations (New Regime FY 2025-26 rules vs Old Regime)
       const newTaxable = Math.max(0, annualCtc - 75000);
       let newTax = 0;
       if (newTaxable > 1200000) {
@@ -652,42 +762,60 @@ async function startServer() {
       const oldRegimeTax = Math.round(oldTax * 1.04);
       const annualTax = Math.min(newRegimeTax, oldRegimeTax);
       const epfAndGratuity = Math.round(annualCtc * 0.08);
-      const monthlyInHand = annualCtc > 0 ? Math.round(Math.max(0, annualCtc - annualTax - epfAndGratuity) / 12) : 0;
-      const monthlySurplus = Math.max(0, monthlyInHand - monthlyExpenses);
-      const recommendedSip = Math.round(monthlySurplus * 0.6);
-      const emergencyTarget6Mo = monthlyExpenses * 6;
-      const emergencyShortfall = Math.max(0, emergencyTarget6Mo - currentSavings);
+      const monthlyInHand = hasCtc ? Math.round(Math.max(0, annualCtc - annualTax - epfAndGratuity) / 12) : 0;
+      const monthlySurplus = (hasCtc && hasExpenses) ? Math.max(0, monthlyInHand - monthlyExpenses) : null;
+      const recommendedSip = monthlySurplus !== null ? Math.round(monthlySurplus * 0.6) : null;
+      const emergencyTarget6Mo = hasExpenses && monthlyExpenses > 0 ? monthlyExpenses * 6 : null;
+      const emergencyShortfall = (emergencyTarget6Mo !== null && hasSavings) ? Math.max(0, emergencyTarget6Mo - currentSavings) : null;
       const monthsToBuildEmergency =
-        emergencyShortfall > 0 && monthlySurplus > 0
+        emergencyShortfall !== null && emergencyShortfall > 0 && monthlySurplus !== null && monthlySurplus > 0
           ? (emergencyShortfall / monthlySurplus).toFixed(1)
-          : '0';
+          : emergencyShortfall === 0 ? '0 (Fully funded)' : 'Unknown';
 
-      const selectedLanguage = userContext?.preferredLanguage || 'English';
+      const missingFields: string[] = [];
+      if (!hasCtc) missingFields.push('Annual CTC / Salary');
+      if (!hasExpenses) missingFields.push('Monthly Living Expenses');
+      if (!hasSavings) missingFields.push('Current Savings Corpus');
 
-      const systemInstruction = `You are DhanDrishti's AI financial mentor, a friendly financial-literacy guide for Indian users. You are given the user's Executive Dashboard/profile data as JSON, followed by their question. Base your answer on that user's real numbers and situation. Check affordability, cash flow, existing investments, goals, time horizon and risk profile before answering. Explain in simple ${selectedLanguage} with short sentences and practical examples in ₹.
-When projecting returns, state your assumptions and clearly note that they are estimates, not guaranteed returns. If important profile data needed for a good answer is missing, state what is missing instead of guessing or inventing numbers.
-Never reveal or ask for sensitive identifiers (e.g. account numbers, card numbers, PAN, Aadhaar, phone, email, addresses). This is educational guidance, not licensed financial advice.
-Always reply in ${selectedLanguage} (unless the user explicitly asks to switch languages in their message).
+      const selectedLanguage = resolvedContext?.preferredLanguage || 'English';
+
+      const systemInstruction = `You are DhanDrishti's AI financial mentor, a friendly, knowledgeable financial-literacy guide for Indian users.
+Base all your guidance directly on the user's specific Executive Dashboard and profile numbers provided below.
+
+Strict Guidance Rules:
+1. Personalized Calculations:
+   - When the user asks investment questions (e.g., "What if I invest in this SIP tomorrow?"), directly check their real numbers:
+     * Check affordability against their monthly investable surplus (${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}` : 'NOT PROVIDED'}) and monthly living expenses.
+     * Evaluate the effect on their Emergency Fund: note whether their 6-month buffer target is met or if there is a shortfall, and advise building emergency savings first if a gap exists.
+     * Factor in their Risk Appetite (${riskAppetite}) and their Target Goal / Dream Job (${dreamJob}).
+     * Provide a clear, simple projection with clearly stated assumptions (such as expected rate of return e.g. 10-12% p.a. for equity SIP, duration, and monthly amount).
+2. Missing Data Honesty:
+   - If crucial financial data needed to answer the question is marked as "NOT PROVIDED" (such as income, expenses, or savings), explicitly state what numbers are missing instead of inventing or assuming figures.
+3. Language & Tone:
+   - Always respond in ${selectedLanguage} using simple words and short, clear sentences that any person without financial background can easily understand.
+4. Privacy & Safety:
+   - Never reveal, guess, or ask for sensitive identifiers (account numbers, card numbers, PAN, Aadhaar, phone numbers, email addresses, passwords, tokens). Only discuss the general financial figures.
+5. Educational Disclaimer:
+   - Always include a brief note stating that projections are estimates and this is educational guidance, not licensed financial advice.
+6. Formatting:
+   - Highlight key figures and percentages in bold (e.g. **₹5,000**, **12% p.a.**). Keep explanations practical and structured.
 
 Current User Dashboard Profile Data:
-- Name: ${userContext?.fullName || 'Investor'}
-- Age: ${userContext?.age || 'Not specified'}
-- Location: ${userContext?.location || 'India'}
-- Dream Job / Target: ${userContext?.dreamJob || 'Not specified'}
-- Risk Profile: ${riskAppetite}
-- Annual CTC: ${annualCtc > 0 ? `₹${annualCtc.toLocaleString('en-IN')}` : 'Not provided'}
-- Estimated Monthly In-Hand Salary: ${monthlyInHand > 0 ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : 'Not provided'}
-- Monthly Living Expenses: ${monthlyExpenses > 0 ? `₹${monthlyExpenses.toLocaleString('en-IN')}/month` : 'Not provided'}
-- Monthly Investable Surplus: ${monthlySurplus > 0 ? `₹${monthlySurplus.toLocaleString('en-IN')}/month` : 'Not provided'}
-- Existing Monthly Investments: ${monthlyInvestments > 0 ? `₹${monthlyInvestments.toLocaleString('en-IN')}/month` : '₹0/month'}
-- Suggested Monthly SIP (60% of surplus): ${recommendedSip > 0 ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'Calculated once income/expenses are set'}
-- Current Savings Corpus: ${currentSavings > 0 ? `₹${currentSavings.toLocaleString('en-IN')}` : 'Not provided'}
-- 6-Month Emergency Fund Target: ${emergencyTarget6Mo > 0 ? `₹${emergencyTarget6Mo.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to complete)` : 'Calculated once expenses are set'}
-- Tax Comparison: New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})
-
-Formatting & Visuals:
-- Highlight key figures and percentages in bold (e.g. **₹5,000**, **12% p.a.**, **₹10,00,000**).
-- Keep answers practical, structured, and easy to read.`;
+- Name: ${resolvedContext?.fullName || 'Investor'}
+- Age: ${resolvedContext?.age || 'Not specified'}
+- Location: ${resolvedContext?.location || 'India'}
+- Target Goal / Dream Job: ${dreamJob}
+- Risk Profile / Appetite: ${riskAppetite}
+- Annual CTC: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
+- Estimated Monthly In-Hand Salary: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
+- Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
+- Monthly Investable Surplus: ${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
+- Existing Monthly Investments: ₹${monthlyInvestments.toLocaleString('en-IN')}/month
+- Recommended Monthly SIP (60% of surplus): ${recommendedSip !== null ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'NOT CALCULATED (income or expenses missing)'}
+- Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
+- 6-Month Emergency Fund Target: ${emergencyTarget6Mo !== null ? `₹${emergencyTarget6Mo.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall?.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to reach target)` : 'NOT CALCULATED (expenses missing)'}
+- Tax Comparison: ${hasCtc ? `New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})` : 'NOT PROVIDED'}
+- Missing Profile Information: ${missingFields.length > 0 ? missingFields.join(', ') : 'None (Full profile available)'}`;
 
       const recentMessages = Array.isArray(history)
         ? history
@@ -705,7 +833,7 @@ Formatting & Visuals:
 
       const generateWithModel = async (modelName: string) => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000);
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
         try {
           const result = await ai.models.generateContent({
             model: modelName,
@@ -724,9 +852,14 @@ Formatting & Visuals:
       let replyText = '';
       try {
         replyText = await generateWithModel(GEMINI_PRIMARY_MODEL);
-      } catch {
-        // Automatic server-side fallback if primary model is unavailable
-        replyText = await generateWithModel(GEMINI_FALLBACK_MODEL);
+      } catch (primErr) {
+        console.warn(`[AI Mentor] Primary model (${GEMINI_PRIMARY_MODEL}) failed:`, (primErr as Error)?.message || primErr);
+        try {
+          replyText = await generateWithModel(GEMINI_FALLBACK_MODEL);
+        } catch (fallErr) {
+          console.error(`[AI Mentor] Fallback model (${GEMINI_FALLBACK_MODEL}) also failed:`, (fallErr as Error)?.message || fallErr);
+          throw fallErr;
+        }
       }
 
       if (!replyText) {
@@ -737,7 +870,8 @@ Formatting & Visuals:
       // Safety net: post-processing privacy masking
       const safeReply = maskSensitiveFinancialIdentifiers(replyText);
       res.json({ reply: safeReply });
-    } catch {
+    } catch (err) {
+      console.error('[AI Mentor Error]:', (err as Error)?.message || err);
       res.status(503).json({ error: 'MENTOR_TEMPORARILY_UNAVAILABLE' });
     }
   });
@@ -1008,6 +1142,7 @@ Honesty & Accuracy Rules:
 
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
+      console.warn('[Document Explainer] Request failed: Gemini API key is missing.');
       res.status(503).json({ error: 'MISSING_API_KEY' });
       return;
     }
@@ -1015,11 +1150,6 @@ Honesty & Accuracy Rules:
     try {
       const ai = new GoogleGenAI({
         apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
       });
 
       const normalizedMime = cleanMime === 'image/jpg' ? 'image/jpeg' : cleanMime;
@@ -1085,7 +1215,7 @@ Never include sensitive personal information in your answer, such as account num
 
       const runDocExplainWithModel = async (modelName: string) => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
         try {
           const parts: Array<{ inlineData?: { mimeType: string; data: string }; text?: string }> = [];
 
@@ -1107,11 +1237,13 @@ Never include sensitive personal information in your answer, such as account num
           parts.push({
             text: `Analyze this uploaded document/text (${fileName || 'financial document'}) and provide the structured explanation in ${selectedLang}.
 Rules:
-- Explain in simple, plain ${selectedLang} that a person with no financial background can easily grasp.
+- Explain in simple, plain ${selectedLang} that a normal person with no finance knowledge can easily understand. Use short sentences and explain any financial term in plain words.
+- Explain the complete content of the document: what it is, its purpose, what the key figures and terms mean (balances, amounts, deductions, dates, fees, charges, benefits, due dates), and what the user should note or do next.
+- Handle all kinds of financial documents (bank passbook or statement, salary slip, Form 16, loan or EMI paper, insurance policy, mutual fund or SIP statement, receipts, tax documents, or pasted text).
 - Extract ONLY what is visibly readable in the file or text. If any value is unclear, write "not clearly readable". Never invent numbers.
-- Mask any visible Bank Account, Card, Aadhaar, or PAN numbers so only the last 4 digits/characters appear (e.g., XXXXXX1234).
-- If the image/file is too blurry or blank to read any text, set status to "unreadable" and explain politely in summary.
-- If the image/file is not a financial document (e.g. a logo, portrait, nature photo, or unrelated object), set status to "not_financial_document" and state politely in summary that this does not appear to be a financial document.`,
+- PRIVACY: NEVER include sensitive personal information such as account numbers, card numbers, Aadhaar, PAN, phone numbers, emails, addresses, customer IDs, or policy holder personal numbers. Refer to them generically, e.g. "your account".
+- If the image/file is blurry, blank, or too illegible to read any text, set status to "unreadable" and provide a polite message in summary asking for a clearer, readable image or document.
+- If the image/file is not a financial document (e.g. photos of people, nature, logos, or unrelated objects), set status to "not_financial_document" and provide a polite message in summary explaining that the file does not appear to be a financial document and asking to upload a financial document.`,
           });
 
           const response = await ai.models.generateContent({
@@ -1147,8 +1279,14 @@ Rules:
       let rawExplanation;
       try {
         rawExplanation = await runDocExplainWithModel(GEMINI_PRIMARY_MODEL);
-      } catch {
-        rawExplanation = await runDocExplainWithModel(GEMINI_FALLBACK_MODEL);
+      } catch (primErr) {
+        console.warn(`[Document Explainer] Primary model (${GEMINI_PRIMARY_MODEL}) failed:`, (primErr as Error)?.message || primErr);
+        try {
+          rawExplanation = await runDocExplainWithModel(GEMINI_FALLBACK_MODEL);
+        } catch (fallErr) {
+          console.error(`[Document Explainer] Fallback model (${GEMINI_FALLBACK_MODEL}) also failed:`, (fallErr as Error)?.message || fallErr);
+          throw fallErr;
+        }
       }
 
       // Apply deterministic server-side privacy masking to all returned strings
@@ -1191,7 +1329,8 @@ Rules:
       };
 
       res.json({ explanation });
-    } catch {
+    } catch (err) {
+      console.error('[Document Explainer Error]:', (err as Error)?.message || err);
       res.status(503).json({ error: 'DOCUMENT_EXPLAIN_UNAVAILABLE' });
     }
   });
@@ -1350,6 +1489,13 @@ Rules:
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  }
+
+  const apiKey = getGeminiApiKey();
+  if (apiKey) {
+    console.log('Gemini API key loaded successfully.');
+  } else {
+    console.warn('GEMINI_API_KEY is missing. Add it to a .env file and restart.');
   }
 
   app.listen(PORT, '0.0.0.0', () => {
