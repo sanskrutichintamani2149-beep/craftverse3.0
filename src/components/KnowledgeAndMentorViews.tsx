@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { GoogleGenAI } from '@google/genai';
 import {
   Search,
   BookOpen,
@@ -24,7 +25,7 @@ import {
   ChevronRight,
   RotateCcw,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, PreferredLanguage } from '../context/AuthContext';
 import {
   TERM_O_PEDIA_ITEMS,
   TermItem,
@@ -2281,31 +2282,105 @@ export const MythFactView: React.FC = () => {
 
 export const AIMentorView: React.FC = () => {
   const { user, language } = useAuth();
+  const t = getTranslation(language);
   const [messages, setMessages] = useState<
     { role: 'user' | 'mentor'; text: string; isError?: boolean; failedQuestion?: string }[]
-  >([
-    {
-      role: 'mentor',
-      text: `Namaste ${user?.fullName || 'Investor'}! I am your DhanaDrishti AI Financial Mentor. I have loaded your profile (${user?.dreamJob || 'Professional'}, Annual CTC: ${formatINR(user?.annualCtc ?? 1200000)}, Monthly Expenses: ${formatINR(user?.monthlyExpenses ?? 35000)}, Current Savings: ${formatINR(user?.currentSavings ?? 200000)}). Ask me anything about SIP portfolio structure, tax saving, emergency funds, or achieving financial freedom!`,
-    },
-  ]);
+  >([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Initialize welcoming greeting per language
+  useEffect(() => {
+    const greetingText =
+      language === 'Hindi'
+        ? `नमस्ते ${user?.fullName || 'निवेशक'}! मैं धनदृष्टि का AI वित्तीय मेंटर हूँ। मुझसे SIP, इमरजेंसी फंड, टैक्स बचत या वित्तीय लक्ष्यों के बारे में कोई भी प्रश्न पूछें!`
+        : language === 'Marathi'
+        ? `नमस्ते ${user?.fullName || 'गुंतवणूकदार'}! मी धनदृष्टीचा AI आर्थिक मार्गदर्शक आहे. मला SIP, इमर्जन्सी फंड, कर बचत किंवा आर्थिक उद्दिष्टांबद्दल कोणताही प्रश्न विचारा!`
+        : `Namaste ${user?.fullName || 'Investor'}! I am DhanaDrishti's AI Mentor. Ask me any question about SIP, emergency funds, tax optimization, inflation, or smart money management!`;
+
+    setMessages((prev) => {
+      if (prev.length === 0) {
+        return [{ role: 'mentor', text: greetingText }];
+      }
+      return prev;
+    });
+  }, [language, user?.fullName]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
+  const suggestedQuestions: Record<PreferredLanguage, string[]> = {
+    English: [
+      'What is SIP?',
+      'How do I build an emergency fund?',
+      'Explain inflation simply',
+    ],
+    Hindi: [
+      'SIP क्या है?',
+      'इमरजेंसी फंड कैसे बनाएं?',
+      'मुद्रास्फीति (महंगाई) को सरल भाषा में समझाएं',
+    ],
+    Marathi: [
+      'SIP म्हणजे काय?',
+      'इमर्जन्सी फंड कसा तयार करावा?',
+      'महागाई म्हणजे काय ते सोप्या भाषेत सांगा',
+    ],
+  };
 
   const getFriendlyErrorMessage = () => {
     if (language === 'Hindi') {
-      return 'क्षमा करें, अभी AI मेंटर से जुड़ने में थोड़ा समय लग रहा है। कृपया नीचे दिए गए बटन से पुनः प्रयास करें।';
+      return 'क्षमा करें, AI मेंटर से जुड़ने में समस्या हुई। कृपया API कुंजी जांचें और "पुनः प्रयास करें" पर टैप करें।';
     }
     if (language === 'Marathi') {
-      return 'क्षमस्व, सध्या AI मार्गदर्शकाशी संपर्क साधताना अडचण येत आहे. कृपया पुन्हा प्रयत्न करा.';
+      return 'क्षमस्व, AI मार्गदर्शकाशी संपर्क करताना समस्या आली. कृपया API की तपासा आणि "पुन्हा प्रयत्न करा" टॅप करा.';
     }
-    return 'I am having a little trouble reaching the AI Mentor right now. Please tap Retry to try again.';
+    return 'Unable to reach the AI Mentor right now. Please verify the Gemini API key and tap Retry to try again.';
   };
 
-  const fetchMentorReplyWithTimeout = async (
+  const callGeminiDirectOrProxy = async (
     trimmedQuestion: string,
     conversationHistory: { role: 'user' | 'mentor'; text: string }[]
   ): Promise<string> => {
+    const clientApiKey =
+      (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
+      (typeof window !== 'undefined'
+        ? (window as unknown as { VITE_GEMINI_API_KEY?: string }).VITE_GEMINI_API_KEY
+        : undefined);
+
+    const systemInstruction = `You are DhanaDrishti's AI Mentor, a friendly financial-literacy guide for Indian users. Explain concepts simply with short examples in ₹. Do not give personalised buy/sell advice, do not promise returns, and remind users to consult a SEBI-registered advisor for personal investment decisions. Keep answers clear and concise.
+Always reply in ${language}.
+When numbers or percentages are mentioned, format them clearly in ₹ (e.g. ₹5,000, 12% p.a., ₹10,00,000).`;
+
+    // 1. Try client-side direct Gemini call if VITE_GEMINI_API_KEY is configured
+    if (clientApiKey && clientApiKey !== 'MY_GEMINI_API_KEY') {
+      try {
+        const ai = new GoogleGenAI({ apiKey: clientApiKey });
+        const contents = [
+          ...conversationHistory.slice(-8).map((m) => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }],
+          })),
+          { role: 'user', parts: [{ text: trimmedQuestion }] },
+        ];
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config: {
+            systemInstruction,
+          },
+        });
+
+        const reply = response.text?.trim();
+        if (reply) return reply;
+      } catch {
+        // Fallback to server proxy below
+      }
+    }
+
+    // 2. Fallback to server-side proxy route /api/mentor/chat
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000);
     try {
@@ -2328,14 +2403,15 @@ export const AIMentorView: React.FC = () => {
           },
         }),
       });
+
       if (!res.ok) {
-        throw new Error('Mentor request failed');
+        throw new Error(`Server returned ${res.status}`);
       }
       const data = await res.json();
-      if (!data || typeof data.reply !== 'string' || !data.reply.trim()) {
-        throw new Error('Empty mentor reply');
+      if (data && typeof data.reply === 'string' && data.reply.trim()) {
+        return data.reply.trim();
       }
-      return data.reply.trim();
+      throw new Error('Empty reply');
     } finally {
       clearTimeout(timeoutId);
     }
@@ -2356,27 +2432,16 @@ export const AIMentorView: React.FC = () => {
     }
     setIsLoading(true);
 
-    let replyText: string | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        replyText = await fetchMentorReplyWithTimeout(trimmed, updatedHistory.slice(0, -1));
-        break;
-      } catch {
-        if (attempt === 0) {
-          await new Promise((r) => setTimeout(r, 600));
-        }
-      }
-    }
-
-    if (replyText) {
+    try {
+      const reply = await callGeminiDirectOrProxy(trimmed, updatedHistory.slice(0, -1));
       setMessages((prev) => [
         ...prev,
         {
           role: 'mentor',
-          text: replyText,
+          text: reply,
         },
       ]);
-    } else {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
@@ -2386,8 +2451,16 @@ export const AIMentorView: React.FC = () => {
           failedQuestion: trimmed,
         },
       ]);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendQuestion(input);
+    }
   };
 
   return (
@@ -2395,20 +2468,19 @@ export const AIMentorView: React.FC = () => {
       <div className="theme-card rounded-2xl p-6 space-y-2">
         <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
           <Sparkles className="w-4 h-4" />
-          <span>Personalized to Your Saved Profile · Responding in {language}</span>
+          <span>Personalized Financial Awareness · Responding in {language}</span>
         </div>
         <h1 className="text-2xl font-display font-bold text-feature-heading">
-          DhanaDrishti AI Financial Mentor
+          {t.mentor}
         </h1>
+        <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
+          Ask questions about Indian investing, SIPs, tax planning, emergency liquidity, or financial terms.
+        </p>
       </div>
 
-      {/* Quick Prompt Suggestions */}
+      {/* Suggested Quick Questions */}
       <div className="flex flex-wrap gap-2">
-        {[
-          'How should I allocate my monthly surplus into SIPs?',
-          'Should I choose Old or New Tax Regime for my CTC?',
-          'How fast can I build my 6-month Emergency Fund?',
-        ].map((q, idx) => (
+        {suggestedQuestions[language]?.map((q, idx) => (
           <button
             key={idx}
             type="button"
@@ -2422,16 +2494,16 @@ export const AIMentorView: React.FC = () => {
         ))}
       </div>
 
-      {/* Conversation Container */}
+      {/* Chat Conversation Box */}
       <div className="theme-card rounded-2xl p-6 space-y-4">
-        <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+        <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
           {messages.map((m, i) => (
             <div
               key={i}
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed ${
+                className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-sm ${
                   m.role === 'user'
                     ? 'bg-emerald-600 text-white whitespace-pre-line'
                     : 'bg-[var(--bg-secondary)] text-[var(--text-primary)] border border-[var(--border-subtle)]'
@@ -2445,7 +2517,7 @@ export const AIMentorView: React.FC = () => {
                     onClick={() => sendQuestion(m.failedQuestion!, true)}
                     className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    Retry
+                    {t.retry || 'Retry'}
                   </button>
                 )}
               </div>
@@ -2454,13 +2526,15 @@ export const AIMentorView: React.FC = () => {
           {isLoading && (
             <div className="flex justify-start">
               <div className="max-w-[85%] rounded-2xl px-4 py-3 text-xs bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                <span>DhanaDrishti AI Mentor is thinking...</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                <span>{t.mentorThinking || 'DhanaDrishti AI Mentor is thinking...'}</span>
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
+        {/* Input bar with Enter-to-send */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -2472,16 +2546,18 @@ export const AIMentorView: React.FC = () => {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question about SIPs, taxes, emergency funds, or your CTC..."
-            className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm"
+            onKeyDown={handleKeyDown}
+            disabled={isLoading}
+            placeholder={t.askMentorPlaceholder || 'Ask a question about mutual funds, SIPs, taxes, or budgeting... (Press Enter to send)'}
+            className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm focus:outline-none"
           />
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-sm font-semibold transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
           >
             <Send className="w-4 h-4" />
-            <span>Ask</span>
+            <span>{t.askButton || 'Ask'}</span>
           </button>
         </form>
       </div>

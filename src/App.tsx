@@ -139,12 +139,14 @@ const AppShell: React.FC = () => {
       />
 
       <div className="flex-1 flex">
-        <FeatureSidebar
-          currentView={currentView}
-          onNavigate={handleNavigate}
-          mobileOpen={mobileMenuOpen}
-          onCloseMobile={() => setMobileMenuOpen(false)}
-        />
+        {Boolean(user) && (
+          <FeatureSidebar
+            currentView={currentView}
+            onNavigate={handleNavigate}
+            mobileOpen={mobileMenuOpen}
+            onCloseMobile={() => setMobileMenuOpen(false)}
+          />
+        )}
 
         <main className="flex-1 min-w-0">
           {currentView === 'landing' && <LandingView onNavigate={handleNavigate} />}

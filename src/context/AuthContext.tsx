@@ -295,69 +295,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [user, token]
   );
 
-  /**
-   * CHANGE 8: Security - Automatic logout on tab change or window blur.
-   *
-   * IMPORTANT SECURITY NOTICE:
-   * This behaviour applies strictly while a user is logged in (i.e. user && token are present).
-   * It uses both the Page Visibility API (document.visibilitychange when document.visibilityState === 'hidden')
-   * and window blur to end the current authenticated session via the existing logout() function,
-   * clearing token/session/auth state, and triggering a redirect to the login page so the user must log in again.
-   *
-   * Because it verifies `if (!user || !token) return;`, this automatic logout CANNOT trigger
-   * during the normal login or registration flows themselves (for example, if a third-party popup
-   * or file dialogue opens before an active authenticated session is established).
-   */
-  useEffect(() => {
-    if (!user || !token) return;
-
-    let blurTimer: number | null = null;
-
-    const performSecurityLogout = () => {
-      logout();
-      setSessionExpiredMessage(
-        language === 'Hindi'
-          ? 'सुरक्षा कारणों से टैब बदलने या निष्क्रियता पर सत्र समाप्त कर दिया गया है। कृपया पुनः लॉग इन करें।'
-          : language === 'Marathi'
-          ? 'सुरक्षेच्या कारणास्तव टॅब बदलल्यामुळे किंवा निष्क्रियतेमुळे सत्र बंद करण्यात आले आहे. कृपया पुन्हा लॉग इन करा.'
-          : 'For your security, you were logged out automatically due to switching tabs or window inactivity. Please log in again.'
-      );
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        performSecurityLogout();
-      }
-    };
-
-    const handleWindowBlur = () => {
-      // Small debounce to avoid false triggers during momentary internal DOM focus shifts
-      blurTimer = window.setTimeout(() => {
-        if (document.visibilityState === 'hidden' || !document.hasFocus()) {
-          performSecurityLogout();
-        }
-      }, 350);
-    };
-
-    const handleWindowFocus = () => {
-      if (blurTimer) {
-        window.clearTimeout(blurTimer);
-        blurTimer = null;
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('focus', handleWindowFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('focus', handleWindowFocus);
-      if (blurTimer) window.clearTimeout(blurTimer);
-    };
-  }, [user, token, logout, language]);
-
   return (
     <AuthContext.Provider
       value={{

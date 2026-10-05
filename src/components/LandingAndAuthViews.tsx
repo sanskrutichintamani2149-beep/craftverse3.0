@@ -443,122 +443,55 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     <div className="relative min-h-[calc(100vh-4rem)] flex items-center justify-center py-10 sm:py-16">
       <FirstPageVideoBackground />
 
-      <div className="relative z-10 w-full max-w-6xl mx-auto px-4 sm:px-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-          
-          {/* Left Column (Matching Screenshot: Eyebrow, Headline, Feature Cards with Cyan Icon Tile & Arrow Circle) */}
-          <div className="lg:col-span-6 space-y-6">
-            <div className="space-y-3">
-              <span className="text-xs sm:text-sm font-mono tracking-widest uppercase font-semibold text-[#22D3EE]">
-                YOUR AI FINANCIAL COMPANION
-              </span>
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-display font-extrabold text-white leading-tight">
-                Clarity on Every Rupee — Empowering <span className="text-gradient-accent">Your Finances.</span>
-              </h1>
-              <p className="text-sm sm:text-base text-[#B6C4DD] max-w-lg leading-relaxed">
-                Simulate career jumps, compare Old vs New Tax Regimes, master 60+ Indian financial terms in English, Hindi & Marathi, and achieve true financial freedom.
-              </p>
-            </div>
-
-            {/* Feature Cards matching screenshot navy glass style */}
-            <div className="space-y-3.5 pt-2">
-              <div className="navy-glass-card p-4.5 flex items-center justify-between border border-blue-500/25 hover:border-cyan-400/50 transition-all">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center text-[#22D3EE] shrink-0">
-                    <Sliders className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white">What-If Wealth Simulator</h2>
-                    <p className="text-xs text-[#B6C4DD]">Simulate CTC jumps & step-up SIP wealth trajectory</p>
-                  </div>
-                </div>
-                <div className="w-7 h-7 rounded-full border border-cyan-400/40 flex items-center justify-center text-[#22D3EE] shrink-0">
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </div>
-
-              <div className="navy-glass-card p-4.5 flex items-center justify-between border border-blue-500/25 hover:border-cyan-400/50 transition-all">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center text-[#22D3EE] shrink-0">
-                    <Calendar className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white">10-Year Roadmap & Planners</h2>
-                    <p className="text-xs text-[#B6C4DD]">Compare FY 2025-26 New vs Old Tax Regime</p>
-                  </div>
-                </div>
-                <div className="w-7 h-7 rounded-full border border-cyan-400/40 flex items-center justify-center text-[#22D3EE] shrink-0">
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </div>
-
-              <div className="navy-glass-card p-4.5 flex items-center justify-between border border-blue-500/25 hover:border-cyan-400/50 transition-all">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center text-[#22D3EE] shrink-0">
-                    <BookOpen className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white">Term-O-Pedia Knowledge Hub</h2>
-                    <p className="text-xs text-[#B6C4DD]">Master 60+ terms with interactive flashcards & quiz</p>
-                  </div>
-                </div>
-                <div className="w-7 h-7 rounded-full border border-cyan-400/40 flex items-center justify-center text-[#22D3EE] shrink-0">
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </div>
-            </div>
+      <div className="relative z-10 w-full max-w-md mx-auto px-4 sm:px-6">
+        {/* Focused Login & Register Panel */}
+        <div className="w-full navy-glass-card p-7 sm:p-9 space-y-6 shadow-2xl">
+          {/* Header with Logo and short info */}
+          <div className="flex flex-col items-center text-center space-y-3">
+            <BrandLogo size="lg" showText={true} />
+            <h2 className="text-xl sm:text-2xl font-display font-bold text-white pt-1">
+              {mode === 'login' ? t.welcomeBack : t.createAccount}
+            </h2>
+            <p className="text-xs sm:text-sm text-[#B6C4DD] leading-relaxed">
+              {mode === 'login'
+                ? 'Sign in to access your personalized Indian financial roadmap, tax calculations, and AI mentor.'
+                : 'Create your DhanaDrishti account — your financial scenarios stay saved securely.'}
+            </p>
           </div>
 
-          {/* Right Column: Login Panel (Navy Glass Surface, 24px Radius, Light Inputs, Gradient Button) */}
-          <div className="lg:col-span-6 flex justify-center">
-            <div className="w-full max-w-md navy-glass-card p-7 sm:p-9 space-y-6">
-              
-              {/* Header */}
-              <div className="flex flex-col items-center text-center space-y-2">
-                <BrandLogo size="md" showText={true} />
-                <h2 className="text-2xl font-display font-bold text-white pt-1">
-                  {mode === 'login' ? t.welcomeBack : t.createAccount}
-                </h2>
-                <p className="text-xs text-[#B6C4DD]">
-                  {mode === 'login'
-                    ? 'Sign in to access your saved financial scenarios and workspace.'
-                    : 'Sign up once — your profile remains securely saved across sessions.'}
-                </p>
-              </div>
-
-              {/* Mode Switch Tabs */}
-              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#040B1A]/80 border border-blue-500/25">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('login');
-                    setError(null);
-                    setForgotPasswordNotice(null);
-                  }}
-                  className={`py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                    mode === 'login'
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'text-[#B6C4DD] hover:text-white'
-                  }`}
-                >
-                  {t.login}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('signup');
-                    setError(null);
-                    setForgotPasswordNotice(null);
-                  }}
-                  className={`py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                    mode === 'signup'
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'text-[#B6C4DD] hover:text-white'
-                  }`}
-                >
-                  {t.signUp}
-                </button>
-              </div>
+          {/* Mode Switch Tabs */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#040B1A]/80 border border-blue-500/25">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('login');
+                setError(null);
+                setForgotPasswordNotice(null);
+              }}
+              className={`py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                mode === 'login'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-[#B6C4DD] hover:text-white'
+              }`}
+            >
+              {t.login}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signup');
+                setError(null);
+                setForgotPasswordNotice(null);
+              }}
+              className={`py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                mode === 'signup'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-[#B6C4DD] hover:text-white'
+              }`}
+            >
+              {t.signUp}
+            </button>
+          </div>
 
               {sessionExpiredMessage && (
                 <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
@@ -776,10 +709,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   </div>
                 </form>
               )}
-
-            </div>
-          </div>
-
         </div>
       </div>
     </div>

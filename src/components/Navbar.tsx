@@ -188,8 +188,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-40 w-full theme-glass border-b border-[var(--border-subtle)] transition-colors">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          {/* Mobile & Tablet Slide-in Drawer Button */}
-          {onToggleMobileMenu && (
+          {/* Mobile & Tablet Slide-in Drawer Button (Visible ONLY after login) */}
+          {Boolean(user) && onToggleMobileMenu && (
             <button
               type="button"
               onClick={onToggleMobileMenu}
@@ -311,7 +311,13 @@ export const FeatureSidebar: React.FC<FeatureSidebarProps> = ({
 }) => {
   const { user, language } = useAuth();
   const t = getTranslation(language);
-  const items = user ? SIDEBAR_NAV_ITEMS : GUEST_SIDEBAR_ITEMS;
+
+  // CHANGE 2: Hide the entire left sidebar when logged out (landing, login, signup)
+  if (!user) {
+    return null;
+  }
+
+  const items = SIDEBAR_NAV_ITEMS;
 
   useEffect(() => {
     if (!mobileOpen) return;
