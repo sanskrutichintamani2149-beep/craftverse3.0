@@ -119,6 +119,26 @@
       "profileCompleted": false,
       "createdAt": "2026-10-02T13:03:58.408Z",
       "updatedAt": "2026-10-02T13:03:58.408Z"
+    },
+    "1a579271-d720-4d3c-bea6-6125e0a1505a": {
+      "id": "1a579271-d720-4d3c-bea6-6125e0a1505a",
+      "fullName": "sanskrutichintamani2149@gmail.com",
+      "email": "sanskrutichintamani2149@gmail.com",
+      "passwordHash": "2ad103f2ab576ed01b3c584e47841abcbb3661bb8329f904cdb206f6415688484259915d271cbeae1c553213e2a92a18a69bdb052575c928b0a01927b2e9bb0c",
+      "salt": "7781383c1b5ece5d43271aac4a6ec062",
+      "age": 25,
+      "location": "nashik",
+      "preferredLanguage": "English",
+      "theme": "light",
+      "dreamJob": "xyz",
+      "annualCtc": 12999,
+      "monthlyExpenses": 5000,
+      "currentSavings": 4000,
+      "monthlyInvestments": 40,
+      "riskAppetite": "Balanced",
+      "profileCompleted": true,
+      "createdAt": "2026-10-05T12:26:35.049Z",
+      "updatedAt": "2026-10-05T12:26:54.940Z"
     }
   },
   "sessions": {
@@ -141,6 +161,11 @@
       "token": "5ac8ecfb4099fdb9641bface72d3e1fe221d8243bd3161b68c6960ae76b23971",
       "userId": "78a8f6bf-2e7a-4938-a5a3-4ccec6954f2a",
       "expiresAt": 1792155838408
+    },
+    "6c2fcbc2b04ae1c5be8cec5f7e8a48fce6c3d7eb630946693e03b1ff80f1f1eb": {
+      "token": "6c2fcbc2b04ae1c5be8cec5f7e8a48fce6c3d7eb630946693e03b1ff80f1f1eb",
+      "userId": "1a579271-d720-4d3c-bea6-6125e0a1505a",
+      "expiresAt": 1792412795049
     }
   },
   "mythFactHistory": {
@@ -197,5 +222,9 @@
         "timestamp": "2026-10-02T13:04:05.430Z"
       }
     ]
-  }
+  },
+  "savedCalculations": {},
+  "savedDocumentExplanations": {},
+  "flashcardProgress": {},
+  "quizAttempts": {}
 }
