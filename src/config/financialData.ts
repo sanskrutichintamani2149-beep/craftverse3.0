@@ -3701,7 +3701,6 @@ export interface ProjectionPoint {
   year: number;
   label: string;
   baselineWealth: number;
-  whatIfWealth: number;
   investedCapital: number;
 }
 
@@ -3711,44 +3710,31 @@ export function calculateWealthTrajectory(params: {
   annualReturnRate: number;
   stepUpPercent: number;
   years: number;
-  whatIfMonthlySip?: number;
-  whatIfReturnRate?: number;
-  whatIfStepUpPercent?: number;
-  whatIfInitialDelta?: number;
 }): ProjectionPoint[] {
   const points: ProjectionPoint[] = [];
   let baseCorpus = Math.max(0, params.currentSavings);
-  let altCorpus = Math.max(0, params.currentSavings + (params.whatIfInitialDelta || 0));
   let totalInvested = Math.max(0, params.currentSavings);
-
   let currentBaseSip = Math.max(0, params.monthlySip);
-  let currentAltSip = Math.max(0, params.whatIfMonthlySip ?? params.monthlySip);
-
   const baseMonthlyRate = params.annualReturnRate / 100 / 12;
-  const altMonthlyRate = (params.whatIfReturnRate ?? params.annualReturnRate) / 100 / 12;
 
   points.push({
     year: 0,
     label: 'Now',
     baselineWealth: Math.round(baseCorpus),
-    whatIfWealth: Math.round(altCorpus),
     investedCapital: Math.round(totalInvested),
   });
 
   for (let y = 1; y <= params.years; y++) {
     for (let m = 1; m <= 12; m++) {
       baseCorpus = (baseCorpus + currentBaseSip) * (1 + baseMonthlyRate);
-      altCorpus = (altCorpus + currentAltSip) * (1 + altMonthlyRate);
       totalInvested += currentBaseSip;
     }
     currentBaseSip *= 1 + params.stepUpPercent / 100;
-    currentAltSip *= 1 + (params.whatIfStepUpPercent ?? params.stepUpPercent) / 100;
 
     points.push({
       year: y,
       label: `Yr ${y}`,
       baselineWealth: Math.round(baseCorpus),
-      whatIfWealth: Math.round(altCorpus),
       investedCapital: Math.round(totalInvested),
     });
   }

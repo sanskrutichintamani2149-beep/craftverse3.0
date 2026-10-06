@@ -4,16 +4,12 @@ import { ProjectionPoint, formatCompactINR } from '../config/financialData';
 
 interface WealthTrajectoryChartProps {
   data: ProjectionPoint[];
-  showWhatIf?: boolean;
   baselineLabel?: string;
-  whatIfLabel?: string;
 }
 
 export const WealthTrajectoryChart: React.FC<WealthTrajectoryChartProps> = ({
   data,
-  showWhatIf = false,
-  baselineLabel = 'Baseline Path',
-  whatIfLabel = 'What-If Scenario',
+  baselineLabel = 'Compounding Wealth Path',
 }) => {
   const { theme } = useTheme();
 
@@ -31,13 +27,12 @@ export const WealthTrajectoryChart: React.FC<WealthTrajectoryChartProps> = ({
 
   const maxVal = Math.max(
     100000,
-    ...data.map((d) => Math.max(d.baselineWealth, showWhatIf ? d.whatIfWealth : 0, d.investedCapital))
+    ...data.map((d) => Math.max(d.baselineWealth, d.investedCapital))
   );
 
   const gridColor = theme === 'dark' ? 'rgba(148, 163, 184, 0.20)' : '#e2e8f0';
   const axisTextColor = theme === 'dark' ? '#cbd5e1' : '#475569';
   const baselineColor = theme === 'dark' ? '#10b981' : '#059669';
-  const whatIfColor = theme === 'dark' ? '#f59e0b' : '#d97706';
   const investedColor = theme === 'dark' ? '#64748b' : '#94a3b8';
 
   const getX = (idx: number) =>
@@ -45,7 +40,6 @@ export const WealthTrajectoryChart: React.FC<WealthTrajectoryChartProps> = ({
   const getY = (val: number) => padTop + plotH - Math.min(1, Math.max(0, val / maxVal)) * plotH;
 
   const baselinePoints = data.map((d, i) => `${getX(i)},${getY(d.baselineWealth)}`).join(' ');
-  const whatIfPoints = data.map((d, i) => `${getX(i)},${getY(d.whatIfWealth)}`).join(' ');
   const investedPoints = data.map((d, i) => `${getX(i)},${getY(d.investedCapital)}`).join(' ');
 
   const areaBaseline = `${getX(0)},${padTop + plotH} ${baselinePoints} ${getX(data.length - 1)},${padTop + plotH}`;
@@ -60,19 +54,13 @@ export const WealthTrajectoryChart: React.FC<WealthTrajectoryChartProps> = ({
             <span className="w-3 h-3 rounded-sm inline-block" style={{ backgroundColor: baselineColor }} />
             {baselineLabel}
           </span>
-          {showWhatIf && (
-            <span className="inline-flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
-              <span className="w-3 h-3 rounded-sm inline-block" style={{ backgroundColor: whatIfColor }} />
-              {whatIfLabel}
-            </span>
-          )}
           <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]">
             <span className="w-3 h-0.5 inline-block" style={{ backgroundColor: investedColor }} />
             Total Principal Invested
           </span>
         </div>
         <span className="font-mono text-[var(--text-muted)]">
-          Final Year: {formatCompactINR(showWhatIf ? data[data.length - 1].whatIfWealth : data[data.length - 1].baselineWealth)}
+          Final Year: {formatCompactINR(data[data.length - 1].baselineWealth)}
         </span>
       </div>
 
@@ -139,28 +127,14 @@ export const WealthTrajectoryChart: React.FC<WealthTrajectoryChartProps> = ({
           points={baselinePoints}
         />
 
-        {/* What-If Wealth Line */}
-        {showWhatIf && (
-          <polyline
-            fill="none"
-            stroke={whatIfColor}
-            strokeWidth="2.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            points={whatIfPoints}
-          />
-        )}
-
         {/* Data nodes & X-axis labels */}
         {data.map((pt, i) => {
           const showLabel = data.length <= 12 || i % 2 === 0 || i === data.length - 1;
           const x = getX(i);
           const yBase = getY(pt.baselineWealth);
-          const yAlt = getY(pt.whatIfWealth);
           return (
             <g key={pt.year}>
               <circle cx={x} cy={yBase} r="3.5" fill={baselineColor} />
-              {showWhatIf && <circle cx={x} cy={yAlt} r="3.5" fill={whatIfColor} />}
               {showLabel && (
                 <text
                   x={x}

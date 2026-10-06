@@ -39,6 +39,7 @@ import { PlannersView } from './DashboardAndSimulators';
 import { TermOPediaTab } from './Navbar';
 import { getTranslation } from '../config/translations';
 import { aiService, DocumentExplanation } from '../utils/aiService';
+import { MicButton, ListenButton } from './VoiceComponents';
 
 /**
  * CHANGE 11: AI Response Highlighting
@@ -969,6 +970,7 @@ export const TermOPediaView: React.FC<{
 
 export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { user, token, language } = useAuth();
+  const t = getTranslation(language);
   const [selectedLang, setSelectedLang] = useState<'All' | VideoLanguage>('All');
   const [selectedTopic, setSelectedTopic] = useState<'All' | VideoTopic>('All');
 
@@ -1257,7 +1259,10 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
           <div>
             <strong className="text-emerald-600 dark:text-emerald-400">Privacy & Data Protection: </strong>
-            Your input is processed in memory for this single request only and is never stored on our servers. Sensitive numbers (PAN, Aadhaar, Bank Account, Phone, Email, and Card numbers) are automatically masked.
+            <span>{t.docPrivacyNotice || 'Your Aadhaar, PAN, phone and account numbers are hidden before AI reads this.'}</span>
+            <span className="block text-[var(--text-secondary)] mt-0.5">
+              Documents are processed purely in-memory for this single analysis request and are never stored or retained on disk or external servers.
+            </span>
           </div>
         </div>
 
@@ -1508,9 +1513,16 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
 
             <div className="p-5 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)] space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                  Detected Document Type: {maskSensitiveFinancialIdentifiers(docExplanation.document_type)}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                    Detected Document Type: {maskSensitiveFinancialIdentifiers(docExplanation.document_type)}
+                  </span>
+                  {docExplanation.detected_language && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                      Document language: {docExplanation.detected_language}
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-[var(--text-muted)]">
                     Extracted strictly from visible content · Sensitive IDs masked
@@ -2084,16 +2096,26 @@ export const MythFactView: React.FC = () => {
           noValidate
         >
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <input
-              type="text"
-              value={statementInput}
-              onChange={(e) => {
-                setStatementInput(e.target.value);
-                if (validationMessage) setValidationMessage(null);
-              }}
-              placeholder="e.g., SIP is guaranteed to give 12% returns..."
-              className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm"
-            />
+            <div className="flex-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={statementInput}
+                onChange={(e) => {
+                  setStatementInput(e.target.value);
+                  if (validationMessage) setValidationMessage(null);
+                }}
+                placeholder="e.g., SIP is guaranteed to give 12% returns..."
+                className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm"
+              />
+              <MicButton
+                language={language}
+                disabled={isChecking}
+                onTranscript={(spoken) => {
+                  setStatementInput((prev) => (prev ? `${prev} ${spoken}` : spoken));
+                  if (validationMessage) setValidationMessage(null);
+                }}
+              />
+            </div>
             <button
               type="submit"
               disabled={isChecking}
@@ -2235,9 +2257,15 @@ export const MythFactView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 callout-emphasis text-[var(--text-primary)]">
-                    <strong className="text-emerald-600 dark:text-emerald-400">Remember This: </strong>
-                    {checkedResult.data.remember_this}
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 callout-emphasis text-[var(--text-primary)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <strong className="text-emerald-600 dark:text-emerald-400">Remember This: </strong>
+                      {checkedResult.data.remember_this}
+                    </div>
+                    <ListenButton
+                      text={`${checkedResult.data.short_answer}. Why: ${checkedResult.data.why}. ${checkedResult.data.remember_this}`}
+                      language={language}
+                    />
                   </div>
                 </div>
               );
@@ -2327,6 +2355,9 @@ export const MythFactView: React.FC = () => {
                   <strong>Why: </strong>
                   {item.proof}
                 </p>
+                <div onClick={(e) => e.stopPropagation()} className="pt-2 flex justify-end">
+                  <ListenButton text={`${item.fact}. ${item.proof}`} language={language} />
+                </div>
               </div>
             </div>
           );
@@ -2493,6 +2524,11 @@ export const AIMentorView: React.FC = () => {
                 }`}
               >
                 <div>{m.role === 'mentor' ? renderHighlightedAIResponse(m.text) : m.text}</div>
+                {m.role === 'mentor' && !m.isError && (
+                  <div className="mt-2.5 pt-2 border-t border-[var(--border-subtle)] flex items-center justify-end">
+                    <ListenButton text={m.text} language={language} />
+                  </div>
+                )}
                 {m.isError && m.failedQuestion && (
                   <button
                     type="button"
@@ -2525,15 +2561,24 @@ export const AIMentorView: React.FC = () => {
           }}
           className="pt-3 border-t border-[var(--border-subtle)] flex items-center gap-3"
         >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            placeholder={t.askMentorPlaceholder || 'Ask a question about mutual funds, SIPs, taxes, or budgeting... (Press Enter to send)'}
-            className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm focus:outline-none"
-          />
+          <div className="flex-1 flex items-center gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={isLoading}
+              placeholder={t.askMentorPlaceholder || 'Ask a question about mutual funds, SIPs, taxes, or budgeting... (Press Enter to send)'}
+              className="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm focus:outline-none"
+            />
+            <MicButton
+              language={language}
+              disabled={isLoading}
+              onTranscript={(spoken) => {
+                setInput((prev) => (prev ? `${prev} ${spoken}` : spoken));
+              }}
+            />
+          </div>
           <button
             type="submit"
             disabled={isLoading || !input.trim()}

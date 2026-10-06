@@ -9,7 +9,6 @@ import {
   Menu,
   X,
   LayoutDashboard,
-  Sliders,
   BookOpen,
   HeartPulse,
   CheckCircle2,
@@ -21,9 +20,13 @@ import {
   Layers,
   HelpCircle,
   LogIn,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, PreferredLanguage } from '../context/AuthContext';
+import { usePrivacy } from '../context/PrivacyContext';
+import { maskName } from '../utils/masking';
 import { BrandLogo } from './BrandLogo';
 import { getTranslation } from '../config/translations';
 
@@ -33,7 +36,6 @@ export type AppView =
   | 'profile'
   | 'dashboard'
   | 'termopedia'
-  | 'whatif'
   | 'planners'
   | 'explainer'
   | 'docexplainer'
@@ -67,11 +69,6 @@ export const SIDEBAR_NAV_ITEMS: SidebarItem[] = [
     id: 'profile',
     icon: User,
     label: { English: 'Financial Profile', Hindi: 'वित्तीय प्रोफाइल', Marathi: 'आर्थिक प्रोफाइल' },
-  },
-  {
-    id: 'whatif',
-    icon: Sliders,
-    label: { English: 'What-If Simulator', Hindi: 'What-If सिम्युलेटर', Marathi: 'What-If सिम्युलेटर' },
   },
   {
     id: 'planners',
@@ -177,6 +174,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const { theme, toggleTheme } = useTheme();
   const { user, logout, language, setLanguage } = useAuth();
+  const { privacyMode, togglePrivacyMode } = usePrivacy();
   const t = getTranslation(language);
 
   const handleLogout = async () => {
@@ -213,8 +211,33 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* CHANGE 1: Theme & Language Pills in Header (navy glass pill with a thin blue border) */}
-        <div className="flex items-center gap-2.5">
+        {/* Theme, Language & Privacy Pills in Header */}
+        <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* Privacy Mode Toggle Pill */}
+          <button
+            type="button"
+            onClick={togglePrivacyMode}
+            aria-label={privacyMode ? 'Disable Privacy Mode' : 'Enable Privacy Mode'}
+            title={t.privacyModeTooltip || 'Hide sensitive financial numbers on screen'}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-all cursor-pointer backdrop-blur-md shadow-sm ${
+              privacyMode
+                ? 'border-emerald-500/70 bg-emerald-950/80 text-emerald-300 shadow-emerald-900/40'
+                : 'border-blue-500/30 bg-[#0A1B38]/85 hover:border-cyan-400/50 text-white'
+            }`}
+          >
+            {privacyMode ? (
+              <>
+                <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden md:inline text-xs font-semibold">{t.privacyModeLabel} (ON)</span>
+              </>
+            ) : (
+              <>
+                <Eye className="w-3.5 h-3.5 text-slate-400" />
+                <span className="hidden md:inline text-xs font-semibold">{t.privacyModeLabel}</span>
+              </>
+            )}
+          </button>
+
           {/* Language Selector Pill */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-blue-500/30 bg-[#0A1B38]/85 text-xs text-white backdrop-blur-md shadow-sm">
             <Globe className="w-3.5 h-3.5 text-[#22D3EE] shrink-0" />
@@ -269,7 +292,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <User className="w-3.5 h-3.5 text-[#22D3EE]" />
-                <span className="max-w-[120px] truncate font-semibold">{user.fullName}</span>
+                <span className="max-w-[120px] truncate font-semibold">
+                  {privacyMode ? maskName(user.fullName) : user.fullName}
+                </span>
               </button>
               <button
                 type="button"

@@ -3,6 +3,15 @@ import { useTheme, ThemeMode } from './ThemeContext';
 
 export type PreferredLanguage = 'English' | 'Hindi' | 'Marathi';
 
+export type IncomeType =
+  | 'Salaried'
+  | 'Self-employed or business'
+  | 'Farmer'
+  | 'Daily-wage worker'
+  | 'Homemaker'
+  | 'Student'
+  | 'Other';
+
 export interface UserProfile {
   id: string;
   fullName: string;
@@ -11,9 +20,11 @@ export interface UserProfile {
   location: string;
   preferredLanguage: PreferredLanguage;
   theme: ThemeMode;
+  incomeType?: IncomeType;
   dreamJob: string;
   annualCtc: number | null;
   monthlyExpenses: number | null;
+  monthlyEmi?: number;
   currentSavings: number | null;
   monthlyInvestments: number;
   riskAppetite: 'Conservative' | 'Balanced' | 'Aggressive';
@@ -37,10 +48,12 @@ export interface ProfileUpdatePayload {
   location?: string;
   preferredLanguage?: PreferredLanguage;
   theme?: ThemeMode;
-  dreamJob: string;
-  annualCtc: number;
-  monthlyExpenses: number;
-  currentSavings: number;
+  incomeType?: IncomeType;
+  dreamJob?: string;
+  annualCtc?: number;
+  monthlyExpenses?: number;
+  monthlyEmi?: number;
+  currentSavings?: number;
   monthlyInvestments?: number;
   riskAppetite?: 'Conservative' | 'Balanced' | 'Aggressive';
 }

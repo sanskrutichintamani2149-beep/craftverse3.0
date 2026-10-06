@@ -170,16 +170,16 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
 
   const features = [
     {
-      icon: Sliders,
-      title: t.whatif,
-      desc: 'Simulate how a 30% CTC hike, Step-Up SIP, or major planned expenditure influences your 10-to-20 year net worth trajectory.',
-      target: (user ? 'whatif' : 'auth') as AppView,
+      icon: TrendingUp,
+      title: t.planners,
+      desc: 'Formulate an interactive 10-Year compounding roadmap based on your savings, income, SIP, and monthly EMI obligations.',
+      target: (user ? 'planners' : 'auth') as AppView,
     },
     {
-      icon: Calendar,
-      title: t.planners,
-      desc: 'Formulate a 10-Year compounding roadmap, compare FY 2025-26 New vs Old Tax Regimes, and structure SIPs for long-term targets.',
-      target: 'planners' as AppView,
+      icon: CheckCircle2,
+      title: t.mythfact,
+      desc: 'Debunk common Indian financial myths and verify money rules using grounded financial facts with voice support.',
+      target: (user ? 'mythfact' : 'auth') as AppView,
     },
     {
       icon: BookOpen,

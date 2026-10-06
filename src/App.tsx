@@ -6,11 +6,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { PrivacyProvider } from './context/PrivacyContext';
 import { Navbar, FeatureSidebar, Footer, AppView, TermOPediaTab } from './components/Navbar';
 import { BrandLogo } from './components/BrandLogo';
 import { LandingView, AuthView } from './components/LandingAndAuthViews';
 import { ProfileFormPage } from './components/ProfileFormPage';
-import { DashboardView, WhatIfView, PlannersView } from './components/DashboardAndSimulators';
+import { DashboardView, PlannersView } from './components/DashboardAndSimulators';
 import {
   TermOPediaView,
   ExplainerView,
@@ -23,7 +24,6 @@ import { ScreenshotProtection } from './components/ScreenshotProtection';
 const PROTECTED_VIEWS: AppView[] = [
   'profile',
   'dashboard',
-  'whatif',
   'health',
 ];
 
@@ -183,8 +183,7 @@ const AppShell: React.FC = () => {
             <ProfileFormPage onSuccessNavigate={() => setCurrentView('dashboard')} />
           )}
           {currentView === 'dashboard' && user && <DashboardView onNavigate={handleNavigate} />}
-          {currentView === 'whatif' && user && <WhatIfView />}
-          {currentView === 'planners' && <PlannersView />}
+          {currentView === 'planners' && <PlannersView onNavigate={handleNavigate} />}
           {currentView === 'explainer' && <ExplainerView />}
           {currentView === 'termopedia' && (
             <TermOPediaView
@@ -207,9 +206,11 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <ScreenshotProtection>
-          <AppShell />
-        </ScreenshotProtection>
+        <PrivacyProvider>
+          <ScreenshotProtection>
+            <AppShell />
+          </ScreenshotProtection>
+        </PrivacyProvider>
       </AuthProvider>
     </ThemeProvider>
   );

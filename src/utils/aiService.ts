@@ -1,9 +1,11 @@
-import { PreferredLanguage } from '../context/AuthContext';
+import { PreferredLanguage, IncomeType } from '../context/AuthContext';
 import { maskSensitiveFinancialIdentifiers } from './calculators';
+import { sanitizePii } from './piiSanitizer';
 
 export interface DocumentExplanation {
   status?: 'success' | 'unreadable' | 'not_financial_document';
   document_type: string;
+  detected_language?: 'English' | 'Hindi' | 'Marathi' | string;
   summary: string;
   key_fields: { label: string; value: string }[];
   important_terms_explained: { term: string; explanation: string }[];
@@ -20,12 +22,13 @@ export interface DocumentExplainRequest {
 }
 
 export interface UserFinancialProfileContext {
-  fullName?: string;
+  incomeType?: IncomeType;
   age?: number;
   location?: string;
   dreamJob?: string;
   annualCtc?: number | null;
   monthlyExpenses?: number | null;
+  monthlyEmi?: number;
   currentSavings?: number | null;
   monthlyInvestments?: number;
   riskAppetite?: 'Conservative' | 'Balanced' | 'Aggressive';
@@ -69,7 +72,7 @@ export const aiService = {
             fileData: req.fileData || '',
             mimeType: req.mimeType || 'text/plain',
             fileName: req.fileName || 'Financial Document',
-            textContent: req.textContent || '',
+            textContent: req.textContent ? sanitizePii(req.textContent) : '',
             language: req.language || 'English',
           }),
         });
@@ -137,15 +140,16 @@ export const aiService = {
       const timeoutId = setTimeout(() => controller.abort(), 35000);
 
       try {
-        // Strip out any personal identifiers like email/phone/account before sending
+        // Strip out any personal identifiers like name/email/phone before sending
         const sanitizedContext = req.userProfile
           ? {
-              fullName: req.userProfile.fullName || 'Investor',
+              incomeType: req.userProfile.incomeType || 'Salaried',
               age: req.userProfile.age,
               location: req.userProfile.location,
-              dreamJob: req.userProfile.dreamJob,
+              dreamJob: req.userProfile.dreamJob ? sanitizePii(req.userProfile.dreamJob) : undefined,
               annualCtc: req.userProfile.annualCtc,
               monthlyExpenses: req.userProfile.monthlyExpenses,
+              monthlyEmi: req.userProfile.monthlyEmi || 0,
               currentSavings: req.userProfile.currentSavings,
               monthlyInvestments: req.userProfile.monthlyInvestments,
               riskAppetite: req.userProfile.riskAppetite,
@@ -168,10 +172,10 @@ export const aiService = {
           headers,
           signal: controller.signal,
           body: JSON.stringify({
-            message: req.message,
+            message: sanitizePii(req.message),
             history: req.history.slice(-8).map((m) => ({
               role: m.role,
-              text: m.text,
+              text: sanitizePii(m.text),
             })),
             userContext: sanitizedContext,
           }),

@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { maskSensitiveFinancialIdentifiers } from './src/utils/calculators';
+import { sanitizePii } from './src/utils/piiSanitizer';
 
 dotenv.config();
 
@@ -46,6 +47,15 @@ function getGeminiApiKey(): string | null {
   return null;
 }
 
+export type IncomeType =
+  | 'Salaried'
+  | 'Self-employed or business'
+  | 'Farmer'
+  | 'Daily-wage worker'
+  | 'Homemaker'
+  | 'Student'
+  | 'Other';
+
 export interface UserRecord {
   id: string;
   fullName: string;
@@ -56,9 +66,11 @@ export interface UserRecord {
   location: string;
   preferredLanguage: 'English' | 'Hindi' | 'Marathi';
   theme: 'dark' | 'light';
+  incomeType?: IncomeType;
   dreamJob: string;
   annualCtc: number | null;
   monthlyExpenses: number | null;
+  monthlyEmi?: number;
   currentSavings: number | null;
   monthlyInvestments: number;
   riskAppetite: 'Conservative' | 'Balanced' | 'Aggressive';
@@ -176,11 +188,17 @@ function ensureDb(): DatabaseSchema {
 
     // Treat existing users who already have their dashboard data filled in as completed
     for (const u of Object.values(parsed.users)) {
+      if (u.incomeType === undefined || u.incomeType === null) {
+        u.incomeType = 'Salaried';
+      }
+      if (u.monthlyEmi === undefined || u.monthlyEmi === null) {
+        u.monthlyEmi = 0;
+      }
       if (u.profileCompleted === undefined || u.profileCompleted === null) {
+        const allowZero = u.incomeType === 'Student' || u.incomeType === 'Homemaker';
         u.profileCompleted = Boolean(
-          u.dreamJob &&
           u.annualCtc !== null &&
-          u.annualCtc > 0 &&
+          (allowZero ? u.annualCtc >= 0 : u.annualCtc > 0) &&
           u.monthlyExpenses !== null &&
           u.monthlyExpenses >= 0
         );
@@ -358,9 +376,11 @@ async function startServer() {
         location: cleanLocation,
         preferredLanguage: lang,
         theme: userTheme,
+        incomeType: 'Salaried',
         dreamJob: '',
         annualCtc: null,
         monthlyExpenses: null,
+        monthlyEmi: 0,
         currentSavings: null,
         monthlyInvestments: 0,
         riskAppetite: 'Balanced',
@@ -383,7 +403,7 @@ async function startServer() {
         user: sanitizeUser(newUser),
       });
     } catch (err) {
-      console.error('Signup error:', err);
+      console.error('Signup error:', err instanceof Error ? err.message : 'Error');
       res.status(500).json({ error: 'Unable to create account right now. Please try again.' });
     }
   });
@@ -432,7 +452,7 @@ async function startServer() {
         user: sanitizeUser(user),
       });
     } catch (err) {
-      console.error('Login error:', err);
+      console.error('Login error:', err instanceof Error ? err.message : 'Error');
       res.status(500).json({ error: 'Unable to sign in right now. Please try again.' });
     }
   });
@@ -505,9 +525,11 @@ async function startServer() {
         location,
         preferredLanguage,
         theme,
+        incomeType,
         dreamJob,
         annualCtc,
         monthlyExpenses,
+        monthlyEmi,
         currentSavings,
         monthlyInvestments,
         riskAppetite,
@@ -549,21 +571,56 @@ async function startServer() {
         user.theme = theme;
       }
 
+      // Validate incomeType
+      const validIncomeTypes: IncomeType[] = [
+        'Salaried',
+        'Self-employed or business',
+        'Farmer',
+        'Daily-wage worker',
+        'Homemaker',
+        'Student',
+        'Other',
+      ];
+      const resolvedIncomeType: IncomeType =
+        incomeType && validIncomeTypes.includes(incomeType)
+          ? incomeType
+          : user.incomeType || 'Salaried';
+      user.incomeType = resolvedIncomeType;
+
       // Validate financial fields
-      const cleanJob = dreamJob !== undefined ? String(dreamJob).trim() : user.dreamJob;
-      if (!cleanJob || cleanJob.length < 2) {
-        res.status(400).json({ error: 'Please enter your Dream Job / Job Title (at least 2 characters).' });
-        return;
-      }
+      // dreamJob is optional (What work do you do?)
+      const cleanJob = dreamJob !== undefined ? String(dreamJob).trim() : (user.dreamJob || '');
+      user.dreamJob = cleanJob;
 
       const parsedCtc = annualCtc !== undefined && annualCtc !== '' ? Number(annualCtc) : user.annualCtc;
       const parsedExpenses = monthlyExpenses !== undefined && monthlyExpenses !== '' ? Number(monthlyExpenses) : user.monthlyExpenses;
       const parsedSavings = currentSavings !== undefined && currentSavings !== '' ? Number(currentSavings) : user.currentSavings;
 
-      if (parsedCtc === null || !Number.isFinite(parsedCtc) || parsedCtc <= 0) {
-        res.status(400).json({ error: 'Annual CTC / Salary must be a positive number greater than 0.' });
+      const allowsZeroIncome = resolvedIncomeType === 'Student' || resolvedIncomeType === 'Homemaker';
+
+      if (parsedCtc === null || !Number.isFinite(parsedCtc)) {
+        res.status(400).json({ error: 'Please enter a valid income amount.' });
         return;
       }
+
+      if (allowsZeroIncome) {
+        if (parsedCtc < 0) {
+          res.status(400).json({ error: 'Income amount cannot be negative.' });
+          return;
+        }
+      } else if (resolvedIncomeType === 'Salaried') {
+        if (parsedCtc <= 0) {
+          res.status(400).json({ error: 'Annual CTC / Salary must be a positive number greater than 0.' });
+          return;
+        }
+      } else {
+        // Other non-salaried: cannot be negative
+        if (parsedCtc < 0) {
+          res.status(400).json({ error: 'Income amount cannot be negative.' });
+          return;
+        }
+      }
+
       if (parsedExpenses === null || !Number.isFinite(parsedExpenses) || parsedExpenses < 0) {
         res.status(400).json({ error: 'Monthly Expenses cannot be negative or invalid.' });
         return;
@@ -573,7 +630,17 @@ async function startServer() {
         return;
       }
 
-      user.dreamJob = cleanJob;
+      if (monthlyEmi !== undefined && monthlyEmi !== '') {
+        const parsedEmi = Number(monthlyEmi);
+        if (!Number.isFinite(parsedEmi) || parsedEmi < 0) {
+          res.status(400).json({ error: 'Monthly EMI cannot be negative or invalid.' });
+          return;
+        }
+        user.monthlyEmi = Math.round(parsedEmi);
+      } else if (user.monthlyEmi === undefined) {
+        user.monthlyEmi = 0;
+      }
+
       user.annualCtc = Math.round(parsedCtc);
       user.monthlyExpenses = Math.round(parsedExpenses);
       user.currentSavings = Math.round(parsedSavings);
@@ -587,7 +654,9 @@ async function startServer() {
         user.monthlyInvestments = Math.round(parsedInv);
       } else if (!user.monthlyInvestments) {
         // Default SIP estimate to 20% of monthly surplus if positive
-        const monthlyInHand = Math.round((user.annualCtc * 0.85) / 12);
+        const monthlyInHand = resolvedIncomeType === 'Salaried'
+          ? Math.round((user.annualCtc * 0.85) / 12)
+          : Math.round(user.annualCtc / 12);
         const surplus = Math.max(0, monthlyInHand - user.monthlyExpenses);
         user.monthlyInvestments = Math.round(surplus * 0.5);
       }
@@ -597,9 +666,8 @@ async function startServer() {
       }
 
       user.profileCompleted = Boolean(
-        user.dreamJob &&
         user.annualCtc !== null &&
-        user.annualCtc > 0 &&
+        (allowsZeroIncome || resolvedIncomeType !== 'Salaried' ? user.annualCtc >= 0 : user.annualCtc > 0) &&
         user.monthlyExpenses !== null &&
         user.monthlyExpenses >= 0 &&
         user.currentSavings !== null &&
@@ -695,20 +763,22 @@ async function startServer() {
 
       // Supplement context with database profile if user is authenticated and fields are missing
       let resolvedContext = { ...(userContext || {}) };
+      let dbUser: UserRecord | null = null;
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.slice('Bearer '.length).trim();
         const db = ensureDb();
         const session = db.sessions[token];
         if (session && session.expiresAt > Date.now() && db.users[session.userId]) {
-          const dbUser = db.users[session.userId];
+          dbUser = db.users[session.userId];
           resolvedContext = {
-            fullName: resolvedContext.fullName || dbUser.fullName,
             age: resolvedContext.age ?? dbUser.age,
             location: resolvedContext.location || dbUser.location,
+            incomeType: resolvedContext.incomeType || dbUser.incomeType || 'Salaried',
             dreamJob: resolvedContext.dreamJob || dbUser.dreamJob,
             annualCtc: resolvedContext.annualCtc !== undefined && resolvedContext.annualCtc !== null ? resolvedContext.annualCtc : dbUser.annualCtc,
             monthlyExpenses: resolvedContext.monthlyExpenses !== undefined && resolvedContext.monthlyExpenses !== null ? resolvedContext.monthlyExpenses : dbUser.monthlyExpenses,
+            monthlyEmi: resolvedContext.monthlyEmi !== undefined && resolvedContext.monthlyEmi !== null ? resolvedContext.monthlyEmi : dbUser.monthlyEmi,
             currentSavings: resolvedContext.currentSavings !== undefined && resolvedContext.currentSavings !== null ? resolvedContext.currentSavings : dbUser.currentSavings,
             monthlyInvestments: resolvedContext.monthlyInvestments !== undefined && resolvedContext.monthlyInvestments !== null ? resolvedContext.monthlyInvestments : dbUser.monthlyInvestments,
             riskAppetite: resolvedContext.riskAppetite || dbUser.riskAppetite,
@@ -717,8 +787,13 @@ async function startServer() {
         }
       }
 
+      const incomeType: IncomeType = (resolvedContext.incomeType as IncomeType) || dbUser?.incomeType || 'Salaried';
+      const isSalaried = incomeType === 'Salaried';
+      const isIrregular = ['Self-employed or business', 'Farmer', 'Daily-wage worker', 'Other'].includes(incomeType);
+      const emergencyMonths = isIrregular ? 9 : 6;
+
       // Check available vs missing financial figures
-      const hasCtc = typeof resolvedContext.annualCtc === 'number' && resolvedContext.annualCtc > 0;
+      const hasCtc = typeof resolvedContext.annualCtc === 'number' && resolvedContext.annualCtc >= (isSalaried ? 1 : 0);
       const hasExpenses = typeof resolvedContext.monthlyExpenses === 'number' && resolvedContext.monthlyExpenses >= 0;
       const hasSavings = typeof resolvedContext.currentSavings === 'number' && resolvedContext.currentSavings >= 0;
 
@@ -726,10 +801,11 @@ async function startServer() {
       const monthlyExpenses = hasExpenses ? Number(resolvedContext.monthlyExpenses) : 0;
       const currentSavings = hasSavings ? Number(resolvedContext.currentSavings) : 0;
       const monthlyInvestments = Number(resolvedContext.monthlyInvestments || 0);
+      const monthlyEmi = Number(resolvedContext.monthlyEmi || 0);
       const riskAppetite = resolvedContext.riskAppetite || 'Balanced';
-      const dreamJob = resolvedContext.dreamJob || 'Not specified';
+      const dreamJob = resolvedContext.dreamJob || '';
 
-      // Tax calculations (New Regime FY 2025-26 rules vs Old Regime)
+      // Tax calculations (only relevant for salaried employees)
       const newTaxable = Math.max(0, annualCtc - 75000);
       let newTax = 0;
       if (newTaxable > 1200000) {
@@ -761,66 +837,93 @@ async function startServer() {
       }
       const oldRegimeTax = Math.round(oldTax * 1.04);
       const annualTax = Math.min(newRegimeTax, oldRegimeTax);
-      const epfAndGratuity = Math.round(annualCtc * 0.08);
-      const monthlyInHand = hasCtc ? Math.round(Math.max(0, annualCtc - annualTax - epfAndGratuity) / 12) : 0;
-      const monthlySurplus = (hasCtc && hasExpenses) ? Math.max(0, monthlyInHand - monthlyExpenses) : null;
+      const epfAndGratuity = isSalaried ? Math.round(annualCtc * 0.08) : 0;
+
+      // In-hand monthly calculation:
+      // Salaried: deducts tax and EPF
+      // Non-salaried: monthly income entered was stored as monthly * 12, so monthly take-home = annualCtc / 12
+      const monthlyInHand = hasCtc
+        ? isSalaried
+          ? Math.round(Math.max(0, annualCtc - annualTax - epfAndGratuity) / 12)
+          : Math.round(annualCtc / 12)
+        : 0;
+
+      const monthlySurplus = (hasCtc && hasExpenses) ? Math.max(0, monthlyInHand - monthlyExpenses - monthlyEmi) : null;
       const recommendedSip = monthlySurplus !== null ? Math.round(monthlySurplus * 0.6) : null;
-      const emergencyTarget6Mo = hasExpenses && monthlyExpenses > 0 ? monthlyExpenses * 6 : null;
-      const emergencyShortfall = (emergencyTarget6Mo !== null && hasSavings) ? Math.max(0, emergencyTarget6Mo - currentSavings) : null;
+      const emergencyTarget = (hasExpenses && (monthlyExpenses + monthlyEmi) > 0) ? (monthlyExpenses + monthlyEmi) * emergencyMonths : null;
+      const emergencyShortfall = (emergencyTarget !== null && hasSavings) ? Math.max(0, emergencyTarget - currentSavings) : null;
       const monthsToBuildEmergency =
         emergencyShortfall !== null && emergencyShortfall > 0 && monthlySurplus !== null && monthlySurplus > 0
           ? (emergencyShortfall / monthlySurplus).toFixed(1)
           : emergencyShortfall === 0 ? '0 (Fully funded)' : 'Unknown';
 
       const missingFields: string[] = [];
-      if (!hasCtc) missingFields.push('Annual CTC / Salary');
+      if (!hasCtc && (isSalaried || (incomeType !== 'Student' && incomeType !== 'Homemaker'))) {
+        missingFields.push(isSalaried ? 'Annual CTC / Salary' : 'Monthly Income');
+      }
       if (!hasExpenses) missingFields.push('Monthly Living Expenses');
       if (!hasSavings) missingFields.push('Current Savings Corpus');
 
       const selectedLanguage = resolvedContext?.preferredLanguage || 'English';
 
+      // PII Sanitization for user question and history
+      const sanitizedPrompt = sanitizePii(promptText);
+
       const systemInstruction = `You are DhanDrishti's AI financial mentor, a friendly, knowledgeable financial-literacy guide for Indian users.
 Base all your guidance directly on the user's specific Executive Dashboard and profile numbers provided below.
 
 Strict Guidance Rules:
-1. Personalized Calculations:
+1. Income Profile Adaptation:
+   - User's Income Type: "${incomeType}".
+   ${
+     isSalaried
+       ? `- Salaried User: Address their Annual CTC, estimated monthly in-hand post-tax & EPF, and tax regime comparisons.`
+       : `- Non-Salaried User (${incomeType}): Do NOT mention salaried CTC, corporate EPF, or corporate tax regime comparisons (New vs Old salaried slabs). Refer to their earnings as monthly income, business income, agricultural/harvest earnings, or household budget.
+          - Emergency fund target is specifically ${emergencyMonths} months (₹${emergencyTarget !== null ? emergencyTarget.toLocaleString('en-IN') : 'target'}) to safeguard against variable or irregular cash flows.`
+   }
+2. Personalized Calculations:
    - When the user asks investment questions (e.g., "What if I invest in this SIP tomorrow?"), directly check their real numbers:
-     * Check affordability against their monthly investable surplus (${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}` : 'NOT PROVIDED'}) and monthly living expenses.
-     * Evaluate the effect on their Emergency Fund: note whether their 6-month buffer target is met or if there is a shortfall, and advise building emergency savings first if a gap exists.
-     * Factor in their Risk Appetite (${riskAppetite}) and their Target Goal / Dream Job (${dreamJob}).
+     * Check affordability against their monthly investable surplus (${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}` : 'NOT PROVIDED'}) and living expenses.
+     * Evaluate the effect on their Emergency Fund: note whether their ${emergencyMonths}-month buffer target is met or if there is a shortfall, and advise building emergency savings first if a gap exists.
+     * Factor in their Risk Appetite (${riskAppetite}) and their work/goals (${dreamJob || 'General Financial Health'}).
      * Provide a clear, simple projection with clearly stated assumptions (such as expected rate of return e.g. 10-12% p.a. for equity SIP, duration, and monthly amount).
-2. Missing Data Honesty:
+3. Missing Data Honesty:
    - If crucial financial data needed to answer the question is marked as "NOT PROVIDED" (such as income, expenses, or savings), explicitly state what numbers are missing instead of inventing or assuming figures.
-3. Language & Tone:
+4. Language & Tone:
    - Always respond in ${selectedLanguage} using simple words and short, clear sentences that any person without financial background can easily understand.
-4. Privacy & Safety:
+   - For Hindi and Marathi, write your entire response strictly in Devanagari script (not Hinglish or Romanized script).
+5. Privacy & Data Minimization:
    - Never reveal, guess, or ask for sensitive identifiers (account numbers, card numbers, PAN, Aadhaar, phone numbers, email addresses, passwords, tokens). Only discuss the general financial figures.
-5. Educational Disclaimer:
+6. Educational Disclaimer:
    - Always include a brief note stating that projections are estimates and this is educational guidance, not licensed financial advice.
-6. Formatting:
+7. Formatting:
    - Highlight key figures and percentages in bold (e.g. **₹5,000**, **12% p.a.**). Keep explanations practical and structured.
 
-Current User Dashboard Profile Data:
-- Name: ${resolvedContext?.fullName || 'Investor'}
-- Age: ${resolvedContext?.age || 'Not specified'}
-- Location: ${resolvedContext?.location || 'India'}
-- Target Goal / Dream Job: ${dreamJob}
-- Risk Profile / Appetite: ${riskAppetite}
-- Annual CTC: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
-- Estimated Monthly In-Hand Salary: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
+Financial Dashboard Context (Anonymized & Minimized):
+- Income Category: ${incomeType}
+- Occupation / Field: ${dreamJob || 'Not specified'}
+- Risk Profile: ${riskAppetite}
+- Location Context: ${resolvedContext?.location || 'India'}
+${isSalaried ? `- Annual CTC Package: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : 'NOT PROVIDED'}` : `- Annualized Income: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : '₹0'}`}
+- Monthly In-Hand / Take-Home Income: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : '₹0'}
 - Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
+- Monthly Loan / Liability EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/month
 - Monthly Investable Surplus: ${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
 - Existing Monthly Investments: ₹${monthlyInvestments.toLocaleString('en-IN')}/month
-- Recommended Monthly SIP (60% of surplus): ${recommendedSip !== null ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'NOT CALCULATED (income or expenses missing)'}
+- Recommended Monthly SIP (60% of surplus): ${recommendedSip !== null ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'NOT CALCULATED'}
 - Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
-- 6-Month Emergency Fund Target: ${emergencyTarget6Mo !== null ? `₹${emergencyTarget6Mo.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall?.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to reach target)` : 'NOT CALCULATED (expenses missing)'}
-- Tax Comparison: ${hasCtc ? `New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})` : 'NOT PROVIDED'}
-- Missing Profile Information: ${missingFields.length > 0 ? missingFields.join(', ') : 'None (Full profile available)'}`;
+- Emergency Fund Target (${emergencyMonths} Months): ${emergencyTarget !== null ? `₹${emergencyTarget.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall?.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to reach target)` : 'NOT CALCULATED'}
+${isSalaried ? `- Tax Regime Comparison: New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})` : `- Tax Regime: Not applicable for ${incomeType}`}
+- Missing Profile Information: ${missingFields.length > 0 ? missingFields.join(', ') : 'None (Full financial numbers available)'}`;
 
       const recentMessages = Array.isArray(history)
         ? history
             .filter((m: { role?: string; text?: string }) => m && typeof m.text === 'string' && m.text.trim())
             .slice(-8)
+            .map((m: { role: string; text: string }) => ({
+              role: m.role,
+              text: sanitizePii(m.text),
+            }))
         : [];
 
       const conversationTranscript = recentMessages
@@ -828,8 +931,8 @@ Current User Dashboard Profile Data:
         .join('\n\n');
 
       const fullPrompt = conversationTranscript
-        ? `Previous conversation context:\n${conversationTranscript}\n\nCurrent User Question: ${promptText}`
-        : `User Question: ${promptText}`;
+        ? `Previous conversation context:\n${conversationTranscript}\n\nCurrent User Question: ${sanitizedPrompt}`
+        : `User Question: ${sanitizedPrompt}`;
 
       const generateWithModel = async (modelName: string) => {
         const controller = new AbortController();
@@ -886,16 +989,18 @@ Current User Dashboard Profile Data:
   // POST /api/mythfact/check - Check a user-submitted financial statement (ITEM 1)
   app.post('/api/mythfact/check', async (req: Request, res: Response) => {
     const { statement, language } = req.body || {};
-    const cleanStatement = String(statement || '').trim();
+    const rawStatement = String(statement || '').trim();
 
-    if (cleanStatement.length < 5) {
+    if (rawStatement.length < 5) {
       res.status(400).json({ error: 'STATEMENT_TOO_SHORT' });
       return;
     }
-    if (cleanStatement.length > 500) {
+    if (rawStatement.length > 500) {
       res.status(400).json({ error: 'STATEMENT_TOO_LONG' });
       return;
     }
+
+    const cleanStatement = sanitizePii(rawStatement);
 
     const validLanguages = ['English', 'Hindi', 'Marathi'] as const;
     const selectedLang: 'English' | 'Hindi' | 'Marathi' = validLanguages.includes(language)
@@ -1170,6 +1275,11 @@ Never include sensitive personal information in your answer, such as account num
             description:
               'Detected document type, e.g. Salary Slip, Form 16, Bank Statement, Loan Agreement, Insurance Policy, Credit Card Statement, GST Invoice, Non-Financial Image, or Unreadable Document',
           },
+          detected_language: {
+            type: Type.STRING,
+            description:
+              'Detected primary language of the document: "Marathi", "Hindi", or "English"',
+          },
           summary: { type: Type.STRING },
           key_fields: {
             type: Type.ARRAY,
@@ -1205,6 +1315,7 @@ Never include sensitive personal information in your answer, such as account num
         required: [
           'status',
           'document_type',
+          'detected_language',
           'summary',
           'key_fields',
           'important_terms_explained',
@@ -1230,20 +1341,30 @@ Never include sensitive personal information in your answer, such as account num
 
           if (rawText) {
             parts.push({
-              text: `Pasted Document Text:\n${rawText}`,
+              text: `Pasted Document Text:\n${sanitizePii(rawText)}`,
             });
           }
 
           parts.push({
-            text: `Analyze this uploaded document/text (${fileName || 'financial document'}) and provide the structured explanation in ${selectedLang}.
-Rules:
-- Explain in simple, plain ${selectedLang} that a normal person with no finance knowledge can easily understand. Use short sentences and explain any financial term in plain words.
+            text: `Analyze this uploaded document/text (${fileName || 'financial document'}).
+Language Rules (CRITICAL):
+- DETECT THE LANGUAGE of the uploaded document/text: determine if it is written primarily in Marathi, Hindi, or English. If mixed, choose the dominant language.
+- Set detected_language to "Marathi", "Hindi", or "English".
+- Provide the ENTIRE explanation, summary, key fields, important terms, things to watch out for, and questions to ask in that DETECTED LANGUAGE.
+- If the document is in Marathi, the entire explanation MUST be in simple Marathi (Devanagari script).
+- If the document is in Hindi, the entire explanation MUST be in simple Hindi (Devanagari script).
+- If the document is in English, the entire explanation MUST be in simple English.
+- If the document language cannot be identified or is ambiguous, default to ${selectedLang}.
+
+Content Rules:
+- Explain in simple, plain words that a normal person with no finance knowledge can easily understand. Use short sentences and explain any financial term in plain words.
 - Explain the complete content of the document: what it is, its purpose, what the key figures and terms mean (balances, amounts, deductions, dates, fees, charges, benefits, due dates), and what the user should note or do next.
+- All monetary amounts must be in Rupees (₹).
 - Handle all kinds of financial documents (bank passbook or statement, salary slip, Form 16, loan or EMI paper, insurance policy, mutual fund or SIP statement, receipts, tax documents, or pasted text).
-- Extract ONLY what is visibly readable in the file or text. If any value is unclear, write "not clearly readable". Never invent numbers.
+- Extract ONLY what is visibly readable in the file or text. If any value is unclear, write "not clearly readable" (or its translation in that language). Never invent numbers.
 - PRIVACY: NEVER include sensitive personal information such as account numbers, card numbers, Aadhaar, PAN, phone numbers, emails, addresses, customer IDs, or policy holder personal numbers. Refer to them generically, e.g. "your account".
-- If the image/file is blurry, blank, or too illegible to read any text, set status to "unreadable" and provide a polite message in summary asking for a clearer, readable image or document.
-- If the image/file is not a financial document (e.g. photos of people, nature, logos, or unrelated objects), set status to "not_financial_document" and provide a polite message in summary explaining that the file does not appear to be a financial document and asking to upload a financial document.`,
+- If the image/file is blurry, blank, or too illegible to read any text, set status to "unreadable" and provide a polite message in summary in the detected language asking for a clearer, readable image or document.
+- If the image/file is not a financial document (e.g. photos of people, nature, logos, or unrelated objects), set status to "not_financial_document" and provide a polite message in summary in the detected language explaining that the file does not appear to be a financial document and asking to upload a financial document.`,
           });
 
           const response = await ai.models.generateContent({
@@ -1298,6 +1419,9 @@ Rules:
             : 'success',
         document_type: maskSensitiveFinancialIdentifiers(
           String(rawExplanation?.document_type || 'Document')
+        ),
+        detected_language: maskSensitiveFinancialIdentifiers(
+          String(rawExplanation?.detected_language || selectedLang)
         ),
         summary: maskSensitiveFinancialIdentifiers(String(rawExplanation?.summary || '')),
         key_fields: Array.isArray(rawExplanation?.key_fields)

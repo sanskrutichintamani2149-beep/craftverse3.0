@@ -1,6 +1,6 @@
 {
   "name": "DhanaDrishti",
-  "description": "AI-powered Indian personal finance, wealth vision, What-If simulator, Term-O-Pedia, and financial literacy platform in English, Hindi, and Marathi.",
+  "description": "AI-powered Indian personal finance, wealth vision, 10-Year Roadmap, Term-O-Pedia, and financial literacy platform in English, Hindi, and Marathi.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

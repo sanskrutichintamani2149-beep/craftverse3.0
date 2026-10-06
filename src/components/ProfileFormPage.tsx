@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Save, AlertCircle, CheckCircle2, Briefcase, IndianRupee, MapPin, UserCheck } from 'lucide-react';
-import { useAuth, PreferredLanguage } from '../context/AuthContext';
+import { useAuth, PreferredLanguage, IncomeType } from '../context/AuthContext';
 import { useTheme, ThemeMode } from '../context/ThemeContext';
 import { estimateMonthlyInHand, formatINR } from '../config/financialData';
+import { getTranslation } from '../config/translations';
 
 interface ProfileFormPageProps {
   onSuccessNavigate: () => void;
 }
 
 export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavigate }) => {
-  const { user, updateProfile, unsavedDraft } = useAuth();
+  const { user, updateProfile, unsavedDraft, language } = useAuth();
   const { theme, setTheme } = useTheme();
+  const t = getTranslation(language);
 
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [age, setAge] = useState<string>(user?.age ? String(user.age) : '26');
@@ -20,22 +22,42 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
   );
   const [selectedTheme, setSelectedTheme] = useState<ThemeMode>(theme);
 
+  const [incomeType, setIncomeType] = useState<IncomeType>(
+    (unsavedDraft?.incomeType as IncomeType) || user?.incomeType || 'Salaried'
+  );
+
   const [dreamJob, setDreamJob] = useState(
     unsavedDraft?.dreamJob ?? user?.dreamJob ?? ''
   );
-  const [annualCtc, setAnnualCtc] = useState<string>(
-    unsavedDraft?.annualCtc !== undefined
-      ? String(unsavedDraft.annualCtc)
-      : user?.annualCtc !== null && user?.annualCtc !== undefined
-      ? String(user.annualCtc)
-      : ''
-  );
+
+  // For Salaried: annualCtc. For Non-Salaried: average monthly income (converted to annual on submit)
+  const [incomeInput, setIncomeInput] = useState<string>(() => {
+    if (unsavedDraft?.annualCtc !== undefined && unsavedDraft?.annualCtc !== null) {
+      return (unsavedDraft.incomeType || user?.incomeType || 'Salaried') === 'Salaried'
+        ? String(unsavedDraft.annualCtc)
+        : String(Math.round(unsavedDraft.annualCtc / 12));
+    }
+    if (user?.annualCtc !== null && user?.annualCtc !== undefined) {
+      return (user.incomeType || 'Salaried') === 'Salaried'
+        ? String(user.annualCtc)
+        : String(Math.round(user.annualCtc / 12));
+    }
+    return '';
+  });
+
   const [monthlyExpenses, setMonthlyExpenses] = useState<string>(
     unsavedDraft?.monthlyExpenses !== undefined
       ? String(unsavedDraft.monthlyExpenses)
       : user?.monthlyExpenses !== null && user?.monthlyExpenses !== undefined
       ? String(user.monthlyExpenses)
       : ''
+  );
+  const [monthlyEmi, setMonthlyEmi] = useState<string>(
+    unsavedDraft?.monthlyEmi !== undefined
+      ? String(unsavedDraft.monthlyEmi)
+      : user?.monthlyEmi !== null && user?.monthlyEmi !== undefined
+      ? String(user.monthlyEmi)
+      : '0'
   );
   const [currentSavings, setCurrentSavings] = useState<string>(
     unsavedDraft?.currentSavings !== undefined
@@ -66,9 +88,17 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
       setLocation((prev) => prev || user.location);
       setPreferredLanguage(user.preferredLanguage);
       if (!unsavedDraft) {
-        if (user.dreamJob) setDreamJob(user.dreamJob);
-        if (user.annualCtc !== null) setAnnualCtc(String(user.annualCtc));
+        if (user.incomeType) setIncomeType(user.incomeType);
+        if (user.dreamJob !== undefined) setDreamJob(user.dreamJob);
+        if (user.annualCtc !== null && user.annualCtc !== undefined) {
+          setIncomeInput(
+            (user.incomeType || 'Salaried') === 'Salaried'
+              ? String(user.annualCtc)
+              : String(Math.round(user.annualCtc / 12))
+          );
+        }
         if (user.monthlyExpenses !== null) setMonthlyExpenses(String(user.monthlyExpenses));
+        if (user.monthlyEmi !== null && user.monthlyEmi !== undefined) setMonthlyEmi(String(user.monthlyEmi));
         if (user.currentSavings !== null) setCurrentSavings(String(user.currentSavings));
         if (user.monthlyInvestments) setMonthlyInvestments(String(user.monthlyInvestments));
         if (user.riskAppetite) setRiskAppetite(user.riskAppetite);
@@ -80,8 +110,11 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
     setSelectedTheme(theme);
   }, [theme]);
 
-  const parsedCtcPreview = Number(annualCtc) > 0 ? Number(annualCtc) : 0;
-  const estimatedInHand = estimateMonthlyInHand(parsedCtcPreview);
+  const isSalaried = incomeType === 'Salaried';
+  const allowsZeroIncome = incomeType === 'Student' || incomeType === 'Homemaker';
+  const numEntered = Number(incomeInput) > 0 ? Number(incomeInput) : 0;
+  const parsedCtcPreview = isSalaried ? numEntered : numEntered * 12;
+  const estimatedInHand = isSalaried ? estimateMonthlyInHand(parsedCtcPreview) : numEntered;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,41 +127,58 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
     const cleanLoc = location.trim();
     const cleanJob = dreamJob.trim();
     const numAge = Number(age);
-    const numCtc = Number(annualCtc);
+    const numIncome = incomeInput === '' ? (allowsZeroIncome ? 0 : NaN) : Number(incomeInput);
+    const numAnnualCtc = isSalaried ? numIncome : numIncome * 12;
+
     const numExpenses = Number(monthlyExpenses);
+    const numEmi = monthlyEmi === '' ? 0 : Number(monthlyEmi);
     const numSavings = Number(currentSavings);
     const numInvestments = monthlyInvestments === '' ? undefined : Number(monthlyInvestments);
 
     if (cleanName.length < 2) {
-      setErrorMessage('Please enter your full name (at least 2 characters).');
+      setErrorMessage(t.validationNameError || 'Please enter your full name (at least 2 characters).');
       return;
     }
     if (!Number.isFinite(numAge) || numAge < 15 || numAge > 100) {
-      setErrorMessage('Age must be between 15 and 100.');
+      setErrorMessage(t.validationAgeError || 'Age must be between 15 and 100.');
       return;
     }
     if (cleanLoc.length < 2) {
-      setErrorMessage('Please enter your City / State.');
+      setErrorMessage(t.validationLocationError || 'Please enter your City / State.');
       return;
     }
-    if (cleanJob.length < 2) {
-      setErrorMessage('Please enter your Dream Job / Job Title.');
-      return;
+
+    if (isSalaried) {
+      if (!Number.isFinite(numIncome) || numIncome <= 0) {
+        setErrorMessage(t.validationCtcError || 'Annual CTC / Salary must be a positive number greater than ₹0.');
+        return;
+      }
+    } else if (allowsZeroIncome) {
+      if (!Number.isFinite(numIncome) || numIncome < 0) {
+        setErrorMessage('Average monthly income cannot be negative.');
+        return;
+      }
+    } else {
+      if (!Number.isFinite(numIncome) || numIncome < 0) {
+        setErrorMessage('Average monthly income cannot be negative or blank.');
+        return;
+      }
     }
-    if (annualCtc === '' || !Number.isFinite(numCtc) || numCtc <= 0) {
-      setErrorMessage('Annual CTC / Salary must be a positive number greater than ₹0.');
-      return;
-    }
+
     if (monthlyExpenses === '' || !Number.isFinite(numExpenses) || numExpenses < 0) {
-      setErrorMessage('Monthly Expenses cannot be negative or blank.');
+      setErrorMessage(t.validationExpensesError || 'Monthly Expenses cannot be negative or blank.');
+      return;
+    }
+    if (!Number.isFinite(numEmi) || numEmi < 0) {
+      setErrorMessage('Monthly EMI cannot be negative.');
       return;
     }
     if (currentSavings === '' || !Number.isFinite(numSavings) || numSavings < 0) {
-      setErrorMessage('Current Savings cannot be negative or blank.');
+      setErrorMessage(t.validationSavingsError || 'Current Savings cannot be negative or blank.');
       return;
     }
     if (numInvestments !== undefined && (!Number.isFinite(numInvestments) || numInvestments < 0)) {
-      setErrorMessage('Monthly Investments cannot be negative.');
+      setErrorMessage(t.validationInvestmentsError || 'Monthly Investments cannot be negative.');
       return;
     }
 
@@ -141,9 +191,11 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
         location: cleanLoc,
         preferredLanguage,
         theme: selectedTheme,
+        incomeType,
         dreamJob: cleanJob,
-        annualCtc: Math.round(numCtc),
+        annualCtc: Math.round(numAnnualCtc),
         monthlyExpenses: Math.round(numExpenses),
+        monthlyEmi: Math.round(numEmi),
         currentSavings: Math.round(numSavings),
         monthlyInvestments: numInvestments !== undefined ? Math.round(numInvestments) : undefined,
         riskAppetite,
@@ -153,7 +205,7 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
         onSuccessNavigate();
       }, 450);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to save profile. Your typed values are kept safe.';
+      const msg = err instanceof Error ? err.message : (t.profileSaveError || 'Failed to save profile. Your typed values are kept safe.');
       setErrorMessage(msg);
     } finally {
       setIsSubmitting(false);
@@ -178,7 +230,7 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
                 : 'Edit Personal & Financial Profile'}
             </h1>
             <p className="text-sm text-[var(--text-secondary)] mt-1">
-              Saved securely to your account database so your Dashboard, What-If Simulator, and Planners stay synced across every login.
+              Saved securely to your account database so your Dashboard and 10-Year Roadmap stay synced across every login.
             </p>
           </div>
         </div>
@@ -207,7 +259,7 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
         )}
 
         <form onSubmit={handleSubmit} className="space-y-8" noValidate>
-          {/* Section 1: Financial Profile (Dream Job, Annual CTC, Monthly Expenses, Current Savings) */}
+          {/* Section 1: Financial Profile */}
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
               <Briefcase className="w-4 h-4 text-emerald-500" />
@@ -215,42 +267,69 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              {/* Question 1: How do you earn your money? */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                  {t.incomeTypeQuestion || 'How do you earn your money?'} *
+                </label>
+                <select
+                  value={incomeType}
+                  onChange={(e) => setIncomeType(e.target.value as IncomeType)}
+                  className="w-full px-3.5 py-2.5 rounded-xl theme-input text-sm font-medium"
+                >
+                  <option value="Salaried">{t.incomeTypeSalaried || 'Salaried'}</option>
+                  <option value="Self-employed or business">{t.incomeTypeSelfEmployed || 'Self-employed or business'}</option>
+                  <option value="Farmer">{t.incomeTypeFarmer || 'Farmer'}</option>
+                  <option value="Daily-wage worker">{t.incomeTypeDailyWage || 'Daily-wage worker'}</option>
+                  <option value="Homemaker">{t.incomeTypeHomemaker || 'Homemaker'}</option>
+                  <option value="Student">{t.incomeTypeStudent || 'Student'}</option>
+                  <option value="Other">{t.incomeTypeOther || 'Other'}</option>
+                </select>
+              </div>
+
+              {/* Question 2: What work do you do? (Optional) */}
               <div>
                 <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  Dream Job / Current Job Title *
+                  {t.workDoYouDoLabel || 'What work do you do? (Optional)'}
                 </label>
                 <input
                   type="text"
-                  required
                   value={dreamJob}
                   onChange={(e) => setDreamJob(e.target.value)}
-                  placeholder="e.g., Full-Stack Software Engineer, Product Manager"
+                  placeholder={t.workDoYouDoPlaceholder || 'e.g., Software Engineer, Farmer, Shop Owner'}
                   className="w-full px-3.5 py-2.5 rounded-xl theme-input text-sm"
                 />
               </div>
 
+              {/* Question 3: Income amount (Annual CTC for salaried, Monthly Income for non-salaried) */}
               <div>
                 <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  Annual CTC / Salary (₹ per year) *
+                  {isSalaried
+                    ? `${t.annualCtcLabel || 'Annual CTC / Salary (₹ per year)'} *`
+                    : `${t.avgMonthlyIncomeLabel || 'Average Monthly Income'} (₹ per month)${incomeType === 'Student' || incomeType === 'Homemaker' ? ' (0 if none)' : ' *'}`}
                 </label>
                 <div className="relative">
                   <IndianRupee className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3" />
                   <input
                     type="number"
-                    min="1"
-                    step="1000"
-                    required
-                    value={annualCtc}
-                    onChange={(e) => setAnnualCtc(e.target.value)}
-                    placeholder="e.g., 1200000"
+                    min={incomeType === 'Student' || incomeType === 'Homemaker' ? '0' : isSalaried ? '1' : '0'}
+                    step={isSalaried ? '1000' : '500'}
+                    required={!allowsZeroIncome}
+                    value={incomeInput}
+                    onChange={(e) => setIncomeInput(e.target.value)}
+                    placeholder={isSalaried ? 'e.g., 1200000' : 'e.g., 25000'}
                     className="w-full pl-9 pr-3.5 py-2.5 rounded-xl theme-input text-sm font-mono"
                   />
                 </div>
-                {parsedCtcPreview > 0 && (
+                {isSalaried && parsedCtcPreview > 0 ? (
                   <p className="text-xs text-[var(--text-muted)] mt-1 font-mono">
                     Est. Monthly In-Hand: {formatINR(estimatedInHand)}/mo
                   </p>
-                )}
+                ) : !isSalaried && numEntered > 0 ? (
+                  <p className="text-xs text-[var(--text-muted)] mt-1 font-mono">
+                    Annualized: {formatINR(parsedCtcPreview)}/year
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -267,6 +346,24 @@ export const ProfileFormPage: React.FC<ProfileFormPageProps> = ({ onSuccessNavig
                     value={monthlyExpenses}
                     onChange={(e) => setMonthlyExpenses(e.target.value)}
                     placeholder="e.g., 35000"
+                    className="w-full pl-9 pr-3.5 py-2.5 rounded-xl theme-input text-sm font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                  Monthly EMI / Loan Payments (₹, enter 0 if none)
+                </label>
+                <div className="relative">
+                  <IndianRupee className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="500"
+                    value={monthlyEmi}
+                    onChange={(e) => setMonthlyEmi(e.target.value)}
+                    placeholder="e.g., 15000 (0 if none)"
                     className="w-full pl-9 pr-3.5 py-2.5 rounded-xl theme-input text-sm font-mono"
                   />
                 </div>

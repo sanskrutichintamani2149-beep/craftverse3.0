@@ -5,7 +5,7 @@ export interface TranslationDictionary {
   features: string;
   dashboard: string;
   profile: string;
-  whatif: string;
+  whatif?: string;
   planners: string;
   termopedia: string;
   flashcards: string;
@@ -101,11 +101,30 @@ export interface TranslationDictionary {
   validationSavingsError: string;
   validationInvestmentsError: string;
 
+  // Income Type & Privacy Mode Keys
+  incomeTypeQuestion: string;
+  incomeTypeSalaried: string;
+  incomeTypeSelfEmployed: string;
+  incomeTypeFarmer: string;
+  incomeTypeDailyWage: string;
+  incomeTypeHomemaker: string;
+  incomeTypeStudent: string;
+  incomeTypeOther: string;
+  avgMonthlyIncomeLabel: string;
+  avgMonthlyIncomePlaceholder: string;
+  workDoYouDoLabel: string;
+  workDoYouDoPlaceholder: string;
+  privacyModeLabel: string;
+  privacyModeTooltip: string;
+  docPrivacyNotice: string;
+  monthlyTakeHomeLabel: string;
+  safetyTargetMonthsLabel: string;
+
   // Dashboard
   financialVisionGreeting: string;
   computedLiveNote: string;
   editCtcProfileBtn: string;
-  runWhatIfBtn: string;
+  runWhatIfBtn?: string;
   kpiAnnualCtc: string;
   kpiMonthlyExpenses: string;
   kpiMonthlySurplus: string;
@@ -126,13 +145,13 @@ export interface TranslationDictionary {
   sipInvestmentsLabel: string;
   emergencyBufferLabel: string;
   baselinePathLabel: string;
-  whatIfScenarioLabel: string;
+  whatIfScenarioLabel?: string;
   principalInvestedLabel: string;
   finalYearLabel: string;
 
   // What-If Simulator
-  whatIfTitle: string;
-  whatIfSubtitle: string;
+  whatIfTitle?: string;
+  whatIfSubtitle?: string;
   resetToBaseline: string;
   incrementHikeLabel: string;
   stepUpSipLabel: string;
@@ -316,7 +335,7 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     profileSettingsTitle: 'Account & Financial Profile Settings',
     profileWelcomeBaseline: 'Let’s set your Financial Baseline',
     profileEditTitle: 'Edit Personal & Financial Profile',
-    profileDatabaseSyncNote: 'Saved securely to your account database so your Dashboard, What-If Simulator, and Planners stay synced across every login.',
+    profileDatabaseSyncNote: 'Saved securely to your account database so your Dashboard and 10-Year Roadmap stay synced across every login.',
     coreFinancialProfileTitle: 'Core Financial Profile',
     dreamJobLabel: 'Dream Job / Current Job Title',
     dreamJobPlaceholder: 'e.g., Full-Stack Software Engineer, Product Manager',
@@ -347,6 +366,24 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     validationExpensesError: 'Monthly Expenses cannot be negative.',
     validationSavingsError: 'Current Savings cannot be negative.',
     validationInvestmentsError: 'Monthly Investments cannot be negative.',
+
+    incomeTypeQuestion: 'How do you earn your money?',
+    incomeTypeSalaried: 'Salaried',
+    incomeTypeSelfEmployed: 'Self-employed or business',
+    incomeTypeFarmer: 'Farmer',
+    incomeTypeDailyWage: 'Daily-wage worker',
+    incomeTypeHomemaker: 'Homemaker',
+    incomeTypeStudent: 'Student',
+    incomeTypeOther: 'Other',
+    avgMonthlyIncomeLabel: 'Average Monthly Income',
+    avgMonthlyIncomePlaceholder: 'e.g. 25000',
+    workDoYouDoLabel: 'What work do you do? (Optional)',
+    workDoYouDoPlaceholder: 'e.g., Software Engineer, Farmer, Shop Owner',
+    privacyModeLabel: 'Privacy Mode',
+    privacyModeTooltip: 'Hide sensitive financial numbers on screen',
+    docPrivacyNotice: 'Your Aadhaar, PAN, phone and account numbers are hidden before AI reads this.',
+    monthlyTakeHomeLabel: 'Monthly Take-Home Income',
+    safetyTargetMonthsLabel: 'Safety Target',
 
     financialVisionGreeting: 'Here is Your Financial Vision',
     computedLiveNote: 'All metrics below are computed live from your saved profile in the database.',
@@ -587,6 +624,24 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     validationSavingsError: 'वर्तमान बचत नकारात्मक नहीं हो सकती।',
     validationInvestmentsError: 'मासिक निवेश नकारात्मक नहीं हो सकता।',
 
+    incomeTypeQuestion: 'आप अपनी आय कैसे अर्जित करते हैं?',
+    incomeTypeSalaried: 'वेतनभोगी (Salaried)',
+    incomeTypeSelfEmployed: 'स्व-रोजगार या व्यवसाय (Business)',
+    incomeTypeFarmer: 'किसान (Farmer)',
+    incomeTypeDailyWage: 'दैनिक वेतनभोगी श्रमिक (Daily-wage worker)',
+    incomeTypeHomemaker: 'गृहिणी (Homemaker)',
+    incomeTypeStudent: 'विद्यार्थी (Student)',
+    incomeTypeOther: 'अन्य (Other)',
+    avgMonthlyIncomeLabel: 'औसत मासिक आय',
+    avgMonthlyIncomePlaceholder: 'उदा. 25000',
+    workDoYouDoLabel: 'आप क्या कार्य करते हैं? (वैकल्पिक)',
+    workDoYouDoPlaceholder: 'उदा. सॉफ्टवेयर इंजीनियर, किसान, दुकानदार',
+    privacyModeLabel: 'प्राइवेसी मोड',
+    privacyModeTooltip: 'स्क्रीन पर संवेदनशील वित्तीय आंकड़े छिपाएं',
+    docPrivacyNotice: 'AI द्वारा पढ़े जाने से पहले आपका आधार, पैन, फोन और खाता नंबर सुरक्षित रूप से छिपा दिए जाते हैं।',
+    monthlyTakeHomeLabel: 'मासिक इन-हैंड आय',
+    safetyTargetMonthsLabel: 'सुरक्षा लक्ष्य',
+
     financialVisionGreeting: 'यह रहा आपका संपूर्ण वित्तीय दृष्टिकोण',
     computedLiveNote: 'नीचे दिए गए सभी आंकड़े आपकी सहेजी गई प्रोफाइल से गणना किए गए हैं।',
     editCtcProfileBtn: 'CTC / प्रोफाइल बदलें',
@@ -825,6 +880,24 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     validationExpensesError: 'मासिक खर्च उणे (ऋण) असू शकत नाही.',
     validationSavingsError: 'सध्याची बचत उणे (ऋण) असू शकत नाही.',
     validationInvestmentsError: 'मासिक गुंतवणूक उणे असू शकत नाही.',
+
+    incomeTypeQuestion: 'तुम्ही तुमचे उत्पन्न कसे कमवता?',
+    incomeTypeSalaried: 'नोकरदार (Salaried)',
+    incomeTypeSelfEmployed: 'स्वयंरोजगार किंवा व्यवसाय (Business)',
+    incomeTypeFarmer: 'शेतकरी (Farmer)',
+    incomeTypeDailyWage: 'रोजंदारी कामगार (Daily-wage worker)',
+    incomeTypeHomemaker: 'गृहिणी (Homemaker)',
+    incomeTypeStudent: 'विद्यार्थी (Student)',
+    incomeTypeOther: 'इतर (Other)',
+    avgMonthlyIncomeLabel: 'सरासरी मासिक उत्पन्न',
+    avgMonthlyIncomePlaceholder: 'उदा. 25000',
+    workDoYouDoLabel: 'तुम्ही काय काम करता? (ऐच्छिक)',
+    workDoYouDoPlaceholder: 'उदा. सॉफ्टवेअर इंजिनिअर, शेतकरी, व्यावसायिक',
+    privacyModeLabel: 'प्रायव्हसी मोड',
+    privacyModeTooltip: 'स्क्रीनवरील संवेदनशील आर्थिक आकडे लपवा',
+    docPrivacyNotice: 'AI वाचण्यापूर्वी तुमचा आधार, पॅन, फोन आणि बँक खाते क्रमांक सुरक्षितपणे लपवले जातात.',
+    monthlyTakeHomeLabel: 'मासिक प्रत्यक्ष उत्पन्न',
+    safetyTargetMonthsLabel: 'सुरक्षा उद्दिष्ट',
 
     financialVisionGreeting: 'आपले संपूर्ण आर्थिक नियोजन व उद्दिष्टे',
     computedLiveNote: 'खालील सर्व आकडेवारी आपल्या जतन केलेल्या प्रोफाइलवरून मोजली गेली आहे.',
