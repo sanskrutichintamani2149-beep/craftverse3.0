@@ -51,21 +51,30 @@ const AppShell: React.FC = () => {
   // Support direct route links: /planner, /video-explainers, /flashcards, /quiz
   useEffect(() => {
     const checkRoute = () => {
+      const pathOrHash = `${window.location.pathname}${window.location.hash}`.toLowerCase();
+      if (pathOrHash.includes('flashcard')) {
+        setTermOPediaTab('flashcards');
+        setCurrentView('termopedia');
+        return;
+      } else if (pathOrHash.includes('quiz')) {
+        setTermOPediaTab('quiz');
+        setCurrentView('termopedia');
+        return;
+      } else if (pathOrHash.includes('termopedia') || pathOrHash.includes('terms')) {
+        setTermOPediaTab('terms');
+        setCurrentView('termopedia');
+        return;
+      }
+
       if (user && !user.profileCompleted) {
         setCurrentView('profile');
         return;
       }
-      const pathOrHash = `${window.location.pathname}${window.location.hash}`.toLowerCase();
+
       if (pathOrHash.includes('video') || pathOrHash.includes('explainer')) {
         setCurrentView('explainer');
       } else if (pathOrHash.includes('planner') || pathOrHash.includes('roadmap')) {
         setCurrentView('planners');
-      } else if (pathOrHash.includes('flashcard')) {
-        setTermOPediaTab('flashcards');
-        setCurrentView('termopedia');
-      } else if (pathOrHash.includes('quiz')) {
-        setTermOPediaTab('quiz');
-        setCurrentView('termopedia');
       }
     };
 
@@ -113,6 +122,12 @@ const AppShell: React.FC = () => {
   const handleNavigate = (targetView: AppView, subTab?: TermOPediaTab) => {
     setMobileMenuOpen(false);
 
+    if (targetView === 'termopedia') {
+      setTermOPediaTab(subTab || 'terms');
+      setCurrentView('termopedia');
+      return;
+    }
+
     // If user is logged in but hasn't completed Executive Dashboard questions,
     // block access to all other features and keep them on the profile questions screen
     if (user && !user.profileCompleted) {
@@ -135,12 +150,6 @@ const AppShell: React.FC = () => {
     // CHANGE 6: AI Mentor opens as an item in the left-side area
     if (targetView === 'mentor') {
       setCurrentView('mentor');
-      return;
-    }
-
-    if (targetView === 'termopedia') {
-      setTermOPediaTab(subTab || 'terms');
-      setCurrentView('termopedia');
       return;
     }
 
