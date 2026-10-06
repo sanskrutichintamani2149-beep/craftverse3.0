@@ -1,5 +1,4 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { createServer as createViteServer } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -189,12 +188,11 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
   }
 }
 
-async function startServer() {
+export function createExpressApp() {
   // Initialize primary and fallback database connections
   initDatabaseClients();
 
   const app = express();
-  const PORT = 3000;
 
   app.use(express.json({ limit: '15mb' }));
 
@@ -1808,10 +1806,19 @@ Language Rules:
     }
   });
 
+  return app;
+}
+
+export const app = createExpressApp();
+
+async function startStandaloneServer() {
+  const PORT = Number(process.env.PORT) || 3000;
+
   // Serve public assets (including /videos/login-bg.mp4 with byte-range streaming)
   app.use(express.static(path.join(process.cwd(), 'public')));
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -1837,4 +1844,9 @@ Language Rules:
   });
 }
 
-startServer();
+// Only launch standalone listener when not running in Vercel serverless environment
+if (!process.env.VERCEL) {
+  startStandaloneServer();
+}
+
+export default app;
