@@ -47,43 +47,33 @@ function getGeminiApiKey(): string | null {
   return null;
 }
 
-export type IncomeType =
-  | 'Salaried'
-  | 'Self-employed or business'
-  | 'Farmer'
-  | 'Daily-wage worker'
-  | 'Homemaker'
-  | 'Student'
-  | 'Other';
+import {
+  initDatabaseClients,
+  supabaseClient,
+  verifySupabaseToken,
+  getProfileById,
+  getProfileByEmail,
+  upsertProfile,
+  getMythFactHistory,
+  addMythFactCheck,
+  getSavedCalculations,
+  addSavedCalculation,
+  getSavedDocumentExplanations,
+  addSavedDocumentExplanation,
+  getFlashcardProgress,
+  setFlashcardStatus,
+  getQuizAttempts,
+  addQuizAttempt,
+  createOfflineSessionToken,
+  IncomeType,
+  UserProfileRecord,
+  MythFactCheckRecord,
+  SavedCalculationRecord,
+  SavedDocumentExplanationRecord,
+  QuizAttemptRecord,
+} from './server/db';
 
-export interface UserRecord {
-  id: string;
-  fullName: string;
-  email: string;
-  passwordHash: string;
-  salt: string;
-  age: number;
-  location: string;
-  preferredLanguage: 'English' | 'Hindi' | 'Marathi';
-  theme: 'dark' | 'light';
-  incomeType?: IncomeType;
-  dreamJob: string;
-  annualCtc: number | null;
-  monthlyExpenses: number | null;
-  monthlyEmi?: number;
-  currentSavings: number | null;
-  monthlyInvestments: number;
-  riskAppetite: 'Conservative' | 'Balanced' | 'Aggressive';
-  profileCompleted: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface SessionRecord {
-  token: string;
-  userId: string;
-  expiresAt: number;
-}
+export type { IncomeType, UserProfileRecord };
 
 export interface MythFactStructuredResult {
   verdict: 'Myth' | 'Fact' | 'Partly true / depends' | 'Cannot verify';
@@ -127,7 +117,7 @@ export interface SavedDocumentExplanationEntry {
   timestamp: string;
 }
 
-export interface QuizAttemptRecord {
+export interface QuizAttemptRecordEntry {
   id: string;
   category: string;
   score: number;
@@ -136,111 +126,7 @@ export interface QuizAttemptRecord {
   timestamp: string;
 }
 
-interface DatabaseSchema {
-  users: Record<string, UserRecord>;
-  sessions: Record<string, SessionRecord>;
-  mythFactHistory?: Record<string, MythFactCheckEntry[]>;
-  savedCalculations?: Record<string, SavedCalculationEntry[]>;
-  savedDocumentExplanations?: Record<string, SavedDocumentExplanationEntry[]>;
-  flashcardProgress?: Record<string, Record<string, 'known' | 'learning'>>;
-  quizAttempts?: Record<string, QuizAttemptRecord[]>;
-}
-
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const LEGACY_DB_FILE = path.join(DATA_DIR, 'dhanadrishti.db.json');
-
-function ensureDb(): DatabaseSchema {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  let targetFile = DB_FILE;
-  if (!fs.existsSync(DB_FILE) && fs.existsSync(LEGACY_DB_FILE)) {
-    targetFile = LEGACY_DB_FILE;
-  }
-
-  if (!fs.existsSync(targetFile)) {
-    const initial: DatabaseSchema = {
-      users: {},
-      sessions: {},
-      mythFactHistory: {},
-      savedCalculations: {},
-      savedDocumentExplanations: {},
-      flashcardProgress: {},
-      quizAttempts: {},
-    };
-    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
-    fs.writeFileSync(LEGACY_DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
-    return initial;
-  }
-
-  try {
-    const raw = fs.readFileSync(targetFile, 'utf-8');
-    const parsed = JSON.parse(raw) as DatabaseSchema;
-    if (!parsed.users) parsed.users = {};
-    if (!parsed.sessions) parsed.sessions = {};
-    if (!parsed.mythFactHistory) parsed.mythFactHistory = {};
-    if (!parsed.savedCalculations) parsed.savedCalculations = {};
-    if (!parsed.savedDocumentExplanations) parsed.savedDocumentExplanations = {};
-    if (!parsed.flashcardProgress) parsed.flashcardProgress = {};
-    if (!parsed.quizAttempts) parsed.quizAttempts = {};
-
-    // Treat existing users who already have their dashboard data filled in as completed
-    for (const u of Object.values(parsed.users)) {
-      if (u.incomeType === undefined || u.incomeType === null) {
-        u.incomeType = 'Salaried';
-      }
-      if (u.monthlyEmi === undefined || u.monthlyEmi === null) {
-        u.monthlyEmi = 0;
-      }
-      if (u.profileCompleted === undefined || u.profileCompleted === null) {
-        const allowZero = u.incomeType === 'Student' || u.incomeType === 'Homemaker';
-        u.profileCompleted = Boolean(
-          u.annualCtc !== null &&
-          (allowZero ? u.annualCtc >= 0 : u.annualCtc > 0) &&
-          u.monthlyExpenses !== null &&
-          u.monthlyExpenses >= 0
-        );
-      }
-    }
-
-    // Ensure db.json exists with the latest loaded contents
-    if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
-    }
-
-    return parsed;
-  } catch {
-    return {
-      users: {},
-      sessions: {},
-      mythFactHistory: {},
-      savedCalculations: {},
-      savedDocumentExplanations: {},
-      flashcardProgress: {},
-      quizAttempts: {},
-    };
-  }
-}
-
-function saveDb(db: DatabaseSchema): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  const content = JSON.stringify(db, null, 2);
-  fs.writeFileSync(DB_FILE, content, 'utf-8');
-  try {
-    fs.writeFileSync(LEGACY_DB_FILE, content, 'utf-8');
-  } catch {
-    // Secondary legacy file update failure is non-fatal
-  }
-}
-
-function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-}
-
+// Verification function for legacy PBKDF2 / scrypt users during first migration login
 function verifyPassword(password: string, salt: string, storedHash: string): boolean {
   try {
     const pbkdf2Hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
@@ -249,7 +135,6 @@ function verifyPassword(password: string, salt: string, storedHash: string): boo
     if (pbkdf2Buf.length === storedBuf.length && crypto.timingSafeEqual(pbkdf2Buf, storedBuf)) {
       return true;
     }
-    // Backward compatibility for existing users with legacy scrypt hashes
     const scryptHash = crypto.scryptSync(password, salt, 64).toString('hex');
     const scryptBuf = Buffer.from(scryptHash, 'hex');
     if (scryptBuf.length === storedBuf.length && crypto.timingSafeEqual(scryptBuf, storedBuf)) {
@@ -261,8 +146,8 @@ function verifyPassword(password: string, salt: string, storedHash: string): boo
   return false;
 }
 
-function sanitizeUser(user: UserRecord) {
-  const { passwordHash, salt, ...safeUser } = user;
+function sanitizeProfile(user: UserProfileRecord) {
+  const { legacyPasswordHash, legacySalt, ...safeUser } = user;
   return safeUser;
 }
 
@@ -270,34 +155,43 @@ interface AuthenticatedRequest extends Request {
   userId?: string;
 }
 
-function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authentication required. Please log in again.' });
-    return;
-  }
-  const token = authHeader.slice('Bearer '.length).trim();
-  const db = ensureDb();
-  const session = db.sessions[token];
-  if (!session || session.expiresAt < Date.now()) {
-    if (session) {
-      delete db.sessions[token];
-      saveDb(db);
+async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authentication required. Please log in again.' });
+      return;
     }
-    res.status(401).json({ error: 'Your session has expired. Please log in again.' });
-    return;
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      res.status(401).json({ error: 'Authentication required. Please log in again.' });
+      return;
+    }
+    const userId = await verifySupabaseToken(token);
+    if (!userId) {
+      console.warn('[Auth Notice] requireAuth: Token verification returned null (session invalid or expired)');
+      res.status(401).json({ error: 'Your session has expired. Please log in again.' });
+      return;
+    }
+    const user = await getProfileById(userId);
+    if (!user) {
+      console.warn('[Auth Notice] requireAuth: User profile not found for verified token sub');
+      res.status(401).json({ error: 'User account not found. Please log in again.' });
+      return;
+    }
+    // Row-Level Security enforcement: bind authenticated userId strictly from verified token
+    req.userId = user.id;
+    next();
+  } catch (err: any) {
+    console.warn('[Auth Warning] requireAuth unexpected error:', err?.message || err);
+    res.status(401).json({ error: 'Authentication required. Please log in again.' });
   }
-  const user = db.users[session.userId];
-  if (!user) {
-    res.status(401).json({ error: 'User account not found. Please log in again.' });
-    return;
-  }
-  // Row-Level Security enforcement: bind authenticated userId strictly from verified session token
-  req.userId = user.id;
-  next();
 }
 
 async function startServer() {
+  // Initialize primary and fallback database connections
+  initDatabaseClients();
+
   const app = express();
   const PORT = 3000;
 
@@ -309,7 +203,7 @@ async function startServer() {
   });
 
   // POST /api/auth/signup
-  app.post('/api/auth/signup', (req: Request, res: Response) => {
+  app.post('/api/auth/signup', async (req: Request, res: Response) => {
     try {
       const {
         fullName,
@@ -322,7 +216,7 @@ async function startServer() {
         theme,
       } = req.body || {};
 
-      const cleanName = String(fullName || '').trim();
+      const cleanName = String(fullName || (req.body as any)?.name || '').trim();
       const rawIdentifier = String(email || username || '').trim().toLowerCase();
       const cleanLocation = String(location || '').trim();
       const parsedAge = Number(age);
@@ -352,26 +246,68 @@ async function startServer() {
       const lang = validLanguages.includes(preferredLanguage) ? preferredLanguage : 'English';
       const userTheme = theme === 'light' ? 'light' : 'dark';
 
-      const db = ensureDb();
-      const existing = Object.values(db.users).find(
-        (u) => u.email.toLowerCase() === rawIdentifier || (u as any).username?.toLowerCase() === rawIdentifier
-      );
+      const existing = await getProfileByEmail(rawIdentifier);
       if (existing) {
         res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         return;
       }
 
-      const id = crypto.randomUUID();
-      const salt = crypto.randomBytes(16).toString('hex');
-      const passwordHash = hashPassword(String(password), salt);
-      const now = new Date().toISOString();
+      let userId: string = crypto.randomUUID();
+      let token = await createOfflineSessionToken(userId, rawIdentifier);
 
-      const newUser: UserRecord = {
-        id,
+      // Create user through Supabase Auth with email confirmed (no verification barrier)
+      if (supabaseClient) {
+        try {
+          const { data: authData, error: authError } = await supabaseClient.auth.admin.createUser({
+            email: rawIdentifier,
+            password: String(password),
+            email_confirm: true,
+            user_metadata: { full_name: cleanName },
+          });
+
+          if (authError || !authData?.user) {
+            if (
+              authError?.message?.toLowerCase().includes('already') ||
+              authError?.message?.toLowerCase().includes('registered') ||
+              authError?.message?.toLowerCase().includes('exists')
+            ) {
+              res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
+              return;
+            }
+            res.status(500).json({ error: 'Unable to create account right now. Please try again.' });
+            return;
+          }
+
+          userId = authData.user.id;
+
+          // Sign in to retrieve official Supabase session JWT
+          const { data: signInData, error: signInError } = await supabaseClient.auth.signInWithPassword({
+            email: rawIdentifier,
+            password: String(password),
+          });
+
+          if (signInData?.session?.access_token) {
+            token = signInData.session.access_token;
+          } else {
+            if (signInError) {
+              console.warn('[Auth Warning] signInWithPassword notice:', signInError.message);
+            }
+            token = await createOfflineSessionToken(userId, rawIdentifier);
+          }
+        } catch (authErr: any) {
+          console.error('[Auth Error] Supabase Auth signup error:', authErr?.message);
+          token = await createOfflineSessionToken(userId, rawIdentifier);
+        }
+      }
+
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = crypto.pbkdf2Sync(String(password), salt, 100000, 64, 'sha512').toString('hex');
+
+      const now = new Date().toISOString();
+      const newProfile: UserProfileRecord = {
+        id: userId,
         fullName: cleanName,
         email: rawIdentifier,
-        passwordHash,
-        salt,
         age: Math.round(parsedAge),
         location: cleanLocation,
         preferredLanguage: lang,
@@ -387,20 +323,15 @@ async function startServer() {
         profileCompleted: false,
         createdAt: now,
         updatedAt: now,
+        legacyPasswordHash: passwordHash,
+        legacySalt: salt,
       };
 
-      const token = crypto.randomBytes(32).toString('hex');
-      db.users[id] = newUser;
-      db.sessions[token] = {
-        token,
-        userId: id,
-        expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 14, // 14 days
-      };
-      saveDb(db);
+      await upsertProfile(newProfile);
 
       res.status(201).json({
         token,
-        user: sanitizeUser(newUser),
+        user: sanitizeProfile(newProfile),
       });
     } catch (err) {
       console.error('Signup error:', err instanceof Error ? err.message : 'Error');
@@ -409,7 +340,7 @@ async function startServer() {
   });
 
   // POST /api/auth/login
-  app.post('/api/auth/login', (req: Request, res: Response) => {
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
     try {
       const { email, username, password } = req.body || {};
       const cleanIdentifier = String(email || username || '').trim().toLowerCase();
@@ -419,37 +350,93 @@ async function startServer() {
         return;
       }
 
-      const db = ensureDb();
-      const user = Object.values(db.users).find(
-        (u) => u.email.toLowerCase() === cleanIdentifier || (u as any).username?.toLowerCase() === cleanIdentifier
-      );
-      if (!user) {
+      let authUserId: string | null = null;
+      let sessionToken: string | null = null;
+
+      // 1. Try Supabase Auth sign-in
+      if (supabaseClient) {
+        try {
+          const { data: loginData, error: loginErr } = await supabaseClient.auth.signInWithPassword({
+            email: cleanIdentifier,
+            password: String(password),
+          });
+          if (!loginErr && loginData?.session && loginData?.user) {
+            authUserId = loginData.user.id;
+            sessionToken = loginData.session.access_token;
+          }
+        } catch {
+          // Fall through to legacy check
+        }
+      }
+
+      // 2. Existing user check: seamless first-login migration from PBKDF2 hash
+      if (!authUserId) {
+        const profile = await getProfileByEmail(cleanIdentifier);
+        if (profile && profile.legacyPasswordHash && profile.legacySalt) {
+          if (verifyPassword(String(password), profile.legacySalt, profile.legacyPasswordHash)) {
+            // Password verified against legacy hash! Create or update Supabase Auth user
+            authUserId = profile.id;
+            if (supabaseClient) {
+              try {
+                try {
+                  await supabaseClient.auth.admin.updateUserById(profile.id, {
+                    password: String(password),
+                    email_confirm: true,
+                  });
+                } catch {
+                  await supabaseClient.auth.admin.createUser({
+                    id: profile.id,
+                    email: profile.email,
+                    password: String(password),
+                    email_confirm: true,
+                    user_metadata: { full_name: profile.fullName },
+                  });
+                }
+
+                const { data: migratedLogin } = await supabaseClient.auth.signInWithPassword({
+                  email: profile.email,
+                  password: String(password),
+                });
+                if (migratedLogin?.session) {
+                  sessionToken = migratedLogin.session.access_token;
+                }
+
+                // Clear temporary legacy credentials column
+                profile.legacyPasswordHash = null;
+                profile.legacySalt = null;
+                await upsertProfile(profile);
+              } catch (migrationErr: any) {
+                console.warn('[Legacy User Migration Notice]:', migrationErr?.message);
+              }
+            }
+            if (!sessionToken) {
+              sessionToken = await createOfflineSessionToken(profile.id, profile.email);
+            }
+          } else {
+            res.status(401).json({ error: 'Invalid email or password. Please try again.' });
+            return;
+          }
+        }
+      }
+
+      if (!authUserId) {
         res.status(401).json({ error: 'Invalid email or password. Please check your credentials or sign up.' });
         return;
       }
 
-      if (!verifyPassword(String(password), user.salt, user.passwordHash)) {
-        res.status(401).json({ error: 'Invalid email or password. Please try again.' });
+      const profile = await getProfileById(authUserId);
+      if (!profile) {
+        res.status(401).json({ error: 'User account not found. Please log in again.' });
         return;
       }
 
-      // Upgrade legacy password hash to PBKDF2 seamlessly if needed
-      const pbkdf2Expected = hashPassword(String(password), user.salt);
-      if (user.passwordHash !== pbkdf2Expected) {
-        user.passwordHash = pbkdf2Expected;
+      if (!sessionToken) {
+        sessionToken = await createOfflineSessionToken(profile.id, profile.email);
       }
 
-      const token = crypto.randomBytes(32).toString('hex');
-      db.sessions[token] = {
-        token,
-        userId: user.id,
-        expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 14,
-      };
-      saveDb(db);
-
       res.json({
-        token,
-        user: sanitizeUser(user),
+        token: sessionToken,
+        user: sanitizeProfile(profile),
       });
     } catch (err) {
       console.error('Login error:', err instanceof Error ? err.message : 'Error');
@@ -458,38 +445,32 @@ async function startServer() {
   });
 
   // GET /api/auth/me - session check
-  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const user = db.users[req.userId!];
-    if (!user) {
+  app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const profile = await getProfileById(req.userId!);
+    if (!profile) {
       res.status(401).json({ error: 'User account not found. Please log in again.' });
       return;
     }
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: sanitizeProfile(profile) });
   });
 
   // GET /api/auth/session - session verification
-  app.get('/api/auth/session', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const user = db.users[req.userId!];
-    if (!user) {
+  app.get('/api/auth/session', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const profile = await getProfileById(req.userId!);
+    if (!profile) {
       res.status(401).json({ error: 'User account not found. Please log in again.' });
       return;
     }
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: sanitizeProfile(profile) });
   });
 
   // POST /api/auth/logout
-  app.post('/api/auth/logout', (req: Request, res: Response) => {
+  app.post('/api/auth/logout', async (req: Request, res: Response) => {
     try {
       const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
+      if (authHeader && authHeader.startsWith('Bearer ') && supabaseClient) {
         const token = authHeader.slice('Bearer '.length).trim();
-        const db = ensureDb();
-        if (db.sessions[token]) {
-          delete db.sessions[token];
-          saveDb(db);
-        }
+        await supabaseClient.auth.admin.signOut(token).catch(() => {});
       }
       res.json({ success: true });
     } catch (err) {
@@ -499,25 +480,25 @@ async function startServer() {
   });
 
   // GET /api/profile - RLS enforced via requireAuth
-  app.get('/api/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const user = db.users[req.userId!];
-    if (!user) {
+  app.get('/api/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const profile = await getProfileById(req.userId!);
+    if (!profile) {
       res.status(404).json({ error: 'Profile not found.' });
       return;
     }
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: sanitizeProfile(profile) });
   });
 
   // PUT /api/profile - Update financial & personal profile (RLS enforced via req.userId)
-  app.put('/api/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const db = ensureDb();
-      const user = db.users[req.userId!];
-      if (!user) {
+      const profile = await getProfileById(req.userId!);
+      if (!profile) {
         res.status(404).json({ error: 'User profile not found.' });
         return;
       }
+
+      const user = profile;
 
       const {
         fullName,
@@ -675,10 +656,9 @@ async function startServer() {
       );
       user.updatedAt = new Date().toISOString();
 
-      db.users[user.id] = user;
-      saveDb(db);
+      await upsertProfile(user);
 
-      res.json({ user: sanitizeUser(user) });
+      res.json({ user: sanitizeProfile(user) });
     } catch (err) {
       console.error('Update profile error:', err);
       res.status(500).json({ error: 'Failed to save your profile. Please try again.' });
@@ -686,24 +666,22 @@ async function startServer() {
   });
 
   // PATCH /api/profile/theme - Persist user theme preference across devices
-  app.patch('/api/profile/theme', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/profile/theme', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { theme } = req.body || {};
       if (theme !== 'light' && theme !== 'dark') {
         res.status(400).json({ error: 'Theme must be "light" or "dark".' });
         return;
       }
-      const db = ensureDb();
-      const user = db.users[req.userId!];
+      const user = await getProfileById(req.userId!);
       if (!user) {
         res.status(404).json({ error: 'User not found.' });
         return;
       }
       user.theme = theme;
       user.updatedAt = new Date().toISOString();
-      db.users[user.id] = user;
-      saveDb(db);
-      res.json({ theme: user.theme, user: sanitizeUser(user) });
+      await upsertProfile(user);
+      res.json({ theme: user.theme, user: sanitizeProfile(user) });
     } catch (err) {
       console.error('Theme save error:', err);
       res.status(500).json({ error: 'Failed to save theme preference.' });
@@ -763,27 +741,28 @@ async function startServer() {
 
       // Supplement context with database profile if user is authenticated and fields are missing
       let resolvedContext = { ...(userContext || {}) };
-      let dbUser: UserRecord | null = null;
+      let dbUser: UserProfileRecord | null = null;
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.slice('Bearer '.length).trim();
-        const db = ensureDb();
-        const session = db.sessions[token];
-        if (session && session.expiresAt > Date.now() && db.users[session.userId]) {
-          dbUser = db.users[session.userId];
-          resolvedContext = {
-            age: resolvedContext.age ?? dbUser.age,
-            location: resolvedContext.location || dbUser.location,
-            incomeType: resolvedContext.incomeType || dbUser.incomeType || 'Salaried',
-            dreamJob: resolvedContext.dreamJob || dbUser.dreamJob,
-            annualCtc: resolvedContext.annualCtc !== undefined && resolvedContext.annualCtc !== null ? resolvedContext.annualCtc : dbUser.annualCtc,
-            monthlyExpenses: resolvedContext.monthlyExpenses !== undefined && resolvedContext.monthlyExpenses !== null ? resolvedContext.monthlyExpenses : dbUser.monthlyExpenses,
-            monthlyEmi: resolvedContext.monthlyEmi !== undefined && resolvedContext.monthlyEmi !== null ? resolvedContext.monthlyEmi : dbUser.monthlyEmi,
-            currentSavings: resolvedContext.currentSavings !== undefined && resolvedContext.currentSavings !== null ? resolvedContext.currentSavings : dbUser.currentSavings,
-            monthlyInvestments: resolvedContext.monthlyInvestments !== undefined && resolvedContext.monthlyInvestments !== null ? resolvedContext.monthlyInvestments : dbUser.monthlyInvestments,
-            riskAppetite: resolvedContext.riskAppetite || dbUser.riskAppetite,
-            preferredLanguage: resolvedContext.preferredLanguage || dbUser.preferredLanguage,
-          };
+        const userId = await verifySupabaseToken(token);
+        if (userId) {
+          dbUser = await getProfileById(userId);
+          if (dbUser) {
+            resolvedContext = {
+              age: resolvedContext.age ?? dbUser.age,
+              location: resolvedContext.location || dbUser.location,
+              incomeType: resolvedContext.incomeType || dbUser.incomeType || 'Salaried',
+              dreamJob: resolvedContext.dreamJob || dbUser.dreamJob,
+              annualCtc: resolvedContext.annualCtc !== undefined && resolvedContext.annualCtc !== null ? resolvedContext.annualCtc : dbUser.annualCtc,
+              monthlyExpenses: resolvedContext.monthlyExpenses !== undefined && resolvedContext.monthlyExpenses !== null ? resolvedContext.monthlyExpenses : dbUser.monthlyExpenses,
+              monthlyEmi: resolvedContext.monthlyEmi !== undefined && resolvedContext.monthlyEmi !== null ? resolvedContext.monthlyEmi : dbUser.monthlyEmi,
+              currentSavings: resolvedContext.currentSavings !== undefined && resolvedContext.currentSavings !== null ? resolvedContext.currentSavings : dbUser.currentSavings,
+              monthlyInvestments: resolvedContext.monthlyInvestments !== undefined && resolvedContext.monthlyInvestments !== null ? resolvedContext.monthlyInvestments : dbUser.monthlyInvestments,
+              riskAppetite: resolvedContext.riskAppetite || dbUser.riskAppetite,
+              preferredLanguage: resolvedContext.preferredLanguage || dbUser.preferredLanguage,
+            };
+          }
         }
       }
 
@@ -980,9 +959,8 @@ ${isSalaried ? `- Tax Regime Comparison: New Regime Tax = ₹${newRegimeTax.toLo
   });
 
   // GET /api/mythfact/history - Retrieve logged-in user's saved Myth/Fact checks
-  app.get('/api/mythfact/history', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const list = db.mythFactHistory?.[req.userId!] || [];
+  app.get('/api/mythfact/history', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const list = await getMythFactHistory(req.userId!);
     res.json({ history: list });
   });
 
@@ -1181,9 +1159,8 @@ Honesty & Accuracy Rules:
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.slice('Bearer '.length).trim();
-        const db = ensureDb();
-        const session = db.sessions[token];
-        if (session && session.expiresAt > Date.now() && db.users[session.userId]) {
+        const userId = await verifySupabaseToken(token);
+        if (userId) {
           savedEntry = {
             id: crypto.randomUUID(),
             statement: cleanStatement,
@@ -1192,10 +1169,10 @@ Honesty & Accuracy Rules:
             language: selectedLang,
             timestamp: new Date().toISOString(),
           };
-          if (!db.mythFactHistory) db.mythFactHistory = {};
-          const existingList = db.mythFactHistory[session.userId] || [];
-          db.mythFactHistory[session.userId] = [savedEntry, ...existingList].slice(0, 50);
-          saveDb(db);
+          await addMythFactCheck({
+            ...savedEntry,
+            userId,
+          });
         }
       }
 
@@ -1460,23 +1437,21 @@ Content Rules:
   });
 
   // GET /api/document/saved & POST /api/document/save - Save ONLY explanation text (never the file) for logged-in user
-  app.get('/api/document/saved', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const list = db.savedDocumentExplanations?.[req.userId!] || [];
+  app.get('/api/document/saved', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const list = await getSavedDocumentExplanations(req.userId!);
     res.json({ savedExplanations: list });
   });
 
-  app.post('/api/document/save', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/document/save', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { fileName, explanation, language } = req.body || {};
       if (!explanation || typeof explanation.summary !== 'string') {
         res.status(400).json({ error: 'Invalid explanation data.' });
         return;
       }
-      const db = ensureDb();
-      if (!db.savedDocumentExplanations) db.savedDocumentExplanations = {};
-      const entry: SavedDocumentExplanationEntry = {
+      const entry: SavedDocumentExplanationRecord = {
         id: crypto.randomUUID(),
+        userId: req.userId!,
         fileName: maskSensitiveFinancialIdentifiers(String(fileName || 'Document')),
         document_type: maskSensitiveFinancialIdentifiers(String(explanation.document_type || 'Document')),
         summary: maskSensitiveFinancialIdentifiers(String(explanation.summary || '')),
@@ -1493,9 +1468,7 @@ Content Rules:
         language: ['English', 'Hindi', 'Marathi'].includes(language) ? language : 'English',
         timestamp: new Date().toISOString(),
       };
-      const existing = db.savedDocumentExplanations[req.userId!] || [];
-      db.savedDocumentExplanations[req.userId!] = [entry, ...existing].slice(0, 30);
-      saveDb(db);
+      await addSavedDocumentExplanation(entry);
       res.json({ savedEntry: entry });
     } catch {
       res.status(500).json({ error: 'Could not save explanation.' });
@@ -1503,32 +1476,28 @@ Content Rules:
   });
 
   // GET /api/calculators/saved & POST /api/calculators/save - Save user calculator runs (ITEM 2)
-  app.get('/api/calculators/saved', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const list = db.savedCalculations?.[req.userId!] || [];
+  app.get('/api/calculators/saved', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const list = await getSavedCalculations(req.userId!);
     res.json({ savedCalculations: list });
   });
 
-  app.post('/api/calculators/save', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/calculators/save', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { calculatorType, label, inputs, outputs } = req.body || {};
       if (!['SIP', 'EMI', 'CTC'].includes(calculatorType)) {
         res.status(400).json({ error: 'Invalid calculator type.' });
         return;
       }
-      const db = ensureDb();
-      if (!db.savedCalculations) db.savedCalculations = {};
-      const entry: SavedCalculationEntry = {
+      const entry: SavedCalculationRecord = {
         id: crypto.randomUUID(),
+        userId: req.userId!,
         calculatorType,
         label: String(label || `${calculatorType} Calculation`),
         inputs: inputs || {},
         outputs: outputs || {},
         timestamp: new Date().toISOString(),
       };
-      const existing = db.savedCalculations[req.userId!] || [];
-      db.savedCalculations[req.userId!] = [entry, ...existing].slice(0, 30);
-      saveDb(db);
+      await addSavedCalculation(entry);
       res.json({ savedEntry: entry });
     } catch {
       res.status(500).json({ error: 'Could not save calculation.' });
@@ -1536,15 +1505,14 @@ Content Rules:
   });
 
   // GET /api/termopedia/progress - Retrieve logged-in user's Flashcard statuses & Quiz attempts (CHANGE 4)
-  app.get('/api/termopedia/progress', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = ensureDb();
-    const flashcardProgress = db.flashcardProgress?.[req.userId!] || {};
-    const quizAttempts = db.quizAttempts?.[req.userId!] || [];
+  app.get('/api/termopedia/progress', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const flashcardProgress = await getFlashcardProgress(req.userId!);
+    const quizAttempts = await getQuizAttempts(req.userId!);
     res.json({ flashcardProgress, quizAttempts });
   });
 
   // PUT /api/termopedia/flashcard-status - Save "known" or "learning" status for a term card (CHANGE 4)
-  app.put('/api/termopedia/flashcard-status', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/termopedia/flashcard-status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { termId, status } = req.body || {};
       const cleanTermId = String(termId || '').trim();
@@ -1552,19 +1520,16 @@ Content Rules:
         res.status(400).json({ error: 'Invalid termId or status.' });
         return;
       }
-      const db = ensureDb();
-      if (!db.flashcardProgress) db.flashcardProgress = {};
-      if (!db.flashcardProgress[req.userId!]) db.flashcardProgress[req.userId!] = {};
-      db.flashcardProgress[req.userId!][cleanTermId] = status;
-      saveDb(db);
-      res.json({ flashcardProgress: db.flashcardProgress[req.userId!] });
+      await setFlashcardStatus(req.userId!, cleanTermId, status);
+      const flashcardProgress = await getFlashcardProgress(req.userId!);
+      res.json({ flashcardProgress });
     } catch {
       res.status(500).json({ error: 'Failed to save flashcard progress.' });
     }
   });
 
   // POST /api/termopedia/quiz-attempt - Save a completed quiz attempt for the logged-in user (CHANGE 4)
-  app.post('/api/termopedia/quiz-attempt', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/termopedia/quiz-attempt', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { category, score, totalQuestions, language } = req.body || {};
       const parsedScore = Number(score);
@@ -1579,20 +1544,18 @@ Content Rules:
         res.status(400).json({ error: 'Invalid quiz score or question count.' });
         return;
       }
-      const db = ensureDb();
-      if (!db.quizAttempts) db.quizAttempts = {};
       const attempt: QuizAttemptRecord = {
         id: crypto.randomUUID(),
+        userId: req.userId!,
         category: String(category || 'All'),
         score: Math.round(parsedScore),
         totalQuestions: Math.round(parsedTotal),
         language: ['English', 'Hindi', 'Marathi'].includes(language) ? language : 'English',
         timestamp: new Date().toISOString(),
       };
-      const existing = db.quizAttempts[req.userId!] || [];
-      db.quizAttempts[req.userId!] = [attempt, ...existing].slice(0, 30);
-      saveDb(db);
-      res.json({ savedAttempt: attempt, quizAttempts: db.quizAttempts[req.userId!] });
+      await addQuizAttempt(attempt);
+      const quizAttempts = await getQuizAttempts(req.userId!);
+      res.json({ savedAttempt: attempt, quizAttempts });
     } catch {
       res.status(500).json({ error: 'Failed to save quiz attempt.' });
     }

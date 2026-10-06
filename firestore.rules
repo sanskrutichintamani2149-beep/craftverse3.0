@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // DhanaDrishti (Craftverse 3.0)
+    // Cloud Firestore is used exclusively as a server-side secondary fallback mirror.
+    // Deny all direct client read and write operations.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
