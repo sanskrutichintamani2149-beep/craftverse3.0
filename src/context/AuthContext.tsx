@@ -77,11 +77,20 @@ interface AuthContextValue {
 const SESSION_TOKEN_KEY = 'dhanadrishti_session_token';
 const PREFERRED_LANG_KEY = 'dhanadrishti_preferred_lang';
 
+const CACHED_USER_KEY = 'dhanadrishti_cached_user';
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { theme, setTheme } = useTheme();
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    try {
+      const cached = localStorage.getItem(CACHED_USER_KEY);
+      return cached ? (JSON.parse(cached) as UserProfile) : null;
+    } catch {
+      return null;
+    }
+  });
   const [token, setToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem(SESSION_TOKEN_KEY);
@@ -126,6 +135,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     try {
       localStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(CACHED_USER_KEY);
       sessionStorage.clear();
     } catch {
       // ignore storage errors
@@ -157,12 +167,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await res.json();
       if (data.user) {
         setUser(data.user);
+        try {
+          localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
+        } catch {
+          // ignore storage error
+        }
         applyUserPreferences(data.user);
         setLoading(false);
         return data.user;
       }
     } catch {
-      // network error during initial check
+      // Network error (e.g. offline) - retain cached user if present
+      try {
+        const cached = localStorage.getItem(CACHED_USER_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached) as UserProfile;
+          setUser(parsed);
+          applyUserPreferences(parsed);
+        }
+      } catch {
+        // ignore
+      }
     }
     setLoading(false);
     return null;
@@ -170,6 +195,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     refreshProfile();
+    const handleOnline = () => {
+      refreshProfile();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, [refreshProfile]);
 
   const signup = useCallback(
@@ -188,6 +220,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(data.error || 'Failed to sign up.');
       }
       localStorage.setItem(SESSION_TOKEN_KEY, data.token);
+      try {
+        localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
+      } catch {
+        // ignore
+      }
       setToken(data.token);
       setUser(data.user);
       applyUserPreferences(data.user);
@@ -209,6 +246,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(data.error || 'Invalid login credentials.');
       }
       localStorage.setItem(SESSION_TOKEN_KEY, data.token);
+      try {
+        localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
+      } catch {
+        // ignore
+      }
       setToken(data.token);
       setUser(data.user);
       applyUserPreferences(data.user);
@@ -265,6 +307,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setUser(data.user);
+      try {
+        localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
+      } catch {
+        // ignore
+      }
       setUnsavedDraft(null);
       applyUserPreferences(data.user);
       return data.user;
@@ -281,7 +328,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore storage error
       }
       if (user && token) {
-        // Persist language change to user profile if profile is already completed
+        // Persist language change to user profile if profile is already completed and online
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          return;
+        }
         if (user.profileCompleted && user.annualCtc) {
           fetch('/api/profile', {
             method: 'PUT',

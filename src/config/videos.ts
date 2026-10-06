@@ -16,6 +16,7 @@ export interface CuratedVideo {
   channel: string;
   duration: string;
   description: string;
+  localSrc?: string;
 }
 
 /**

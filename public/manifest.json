@@ -1,0 +1,28 @@
+{
+  "name": "DhanaDrishti — Smart Financial Vision & Wealth Planner",
+  "short_name": "DhanaDrishti",
+  "description": "AI-powered Indian personal finance, wealth vision, 10-Year Roadmap, Term-O-Pedia, and financial literacy platform in English, Hindi, and Marathi.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f1d",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

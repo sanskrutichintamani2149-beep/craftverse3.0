@@ -1179,8 +1179,15 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
       );
       setDocExplanation(result);
     } catch {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
       setDocExplainError(
-        language === 'Hindi'
+        isOffline
+          ? language === 'Hindi'
+            ? 'आप ऑफ़लाइन हैं। दस्तावेज़ विश्लेषण के लिए इंटरनेट कनेक्शन आवश्यक है।'
+            : language === 'Marathi'
+            ? 'आपण ऑफलाइन आहात. कागदपत्र विश्लेषणासाठी इंटरनेट आवश्यक आहे.'
+            : 'You are offline. Analyzing documents requires an active internet connection.'
+          : language === 'Hindi'
           ? 'अभी दस्तावेज़ का विश्लेषण करने में समस्या आ रही है। कृपया पुनः प्रयास करें।'
           : language === 'Marathi'
           ? 'सध्या कागदपत्राचे विश्लेषण करताना अडचण येत आहे. कृपया पुन्हा प्रयत्न करा.'
@@ -1757,6 +1764,7 @@ export const ExplainerView: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               channel={video.channel}
               language={video.language}
               topic={video.topic}
+              localSrc={video.localSrc}
             />
           </div>
         ))}
@@ -2046,8 +2054,15 @@ export const MythFactView: React.FC = () => {
         setHistory((prev) => [responseData!.savedEntry!, ...prev.filter((h) => h.id !== responseData!.savedEntry!.id)]);
       }
     } else {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
       setCheckError(
-        language === 'Hindi'
+        isOffline
+          ? language === 'Hindi'
+            ? 'आप ऑफ़लाइन हैं। इस कथन की जांच के लिए इंटरनेट कनेक्शन आवश्यक है।'
+            : language === 'Marathi'
+            ? 'आपण ऑफलाइन आहात. हे विधान तपासण्यासाठी इंटरनेट आवश्यक आहे.'
+            : 'You are offline. Verifying statements requires an active internet connection.'
+          : language === 'Hindi'
           ? 'अभी इस कथन की जांच करने में थोड़ा समय लग रहा है। कृपया पुनः प्रयास करें।'
           : language === 'Marathi'
           ? 'सध्या हे विधान तपासताना अडचण येत आहे. कृपया पुन्हा प्रयत्न करा.'
@@ -2381,10 +2396,10 @@ export const AIMentorView: React.FC = () => {
   useEffect(() => {
     const greetingText =
       language === 'Hindi'
-        ? `नमस्ते ${user?.fullName || 'निवेशक'}! मैं धनदृष्टि का AI वित्तीय मेंटर हूँ। मुझसे SIP, इमरजेंसी फंड, टैक्स बचत या वित्तीय लक्ष्यों के बारे में कोई भी प्रश्न पूछें!`
+        ? `नमस्ते ${user?.fullName || 'निवेशक'}! मैं धनदृष्टि का AI मनी डिसीजन मेंटर हूँ। कोई भी वित्तीय निर्णय लेने से पहले—जैसे SIP बढ़ाना, वेतन वृद्धि, नई EMI या खर्च में बदलाव—उसे अपने वास्तविक आंकड़ों पर परखें!`
         : language === 'Marathi'
-        ? `नमस्ते ${user?.fullName || 'गुंतवणूकदार'}! मी धनदृष्टीचा AI आर्थिक मार्गदर्शक आहे. मला SIP, इमर्जन्सी फंड, कर बचत किंवा आर्थिक उद्दिष्टांबद्दल कोणताही प्रश्न विचारा!`
-        : `Namaste ${user?.fullName || 'Investor'}! I am DhanaDrishti's AI Mentor. Ask me any question about SIP, emergency funds, tax optimization, inflation, or smart money management!`;
+        ? `नमस्ते ${user?.fullName || 'गुंतवणूकदार'}! मी धनदृष्टीचा AI आर्थिक निर्णय मार्गदर्शक आहे. कोणताही पैशांचा निर्णय घेण्यापूर्वी—जसे की SIP वाढवणे, पगारवाढ, नवीन EMI किंवा खर्च बदल—तो तुमच्या प्रत्यक्ष आकडेवारीवर तपासून पहा!`
+        : `Namaste ${user?.fullName || 'Investor'}! I am DhanaDrishti's AI Money Decision Mentor. Test any financial decision—such as changing your SIP, salary increase, new EMI, or expense change—against your real numbers before you make it!`;
 
     setMessages((prev) => {
       if (prev.length === 0) {
@@ -2400,23 +2415,33 @@ export const AIMentorView: React.FC = () => {
 
   const suggestedQuestions: Record<PreferredLanguage, string[]> = {
     English: [
-      'What is SIP?',
-      'How do I build an emergency fund?',
-      'Explain inflation simply',
+      'What if I invest ₹5,000 more every month?',
+      'What if my salary increases to ₹50,000?',
+      'What if I stop my SIP and save that money instead?',
     ],
     Hindi: [
-      'SIP क्या है?',
-      'इमरजेंसी फंड कैसे बनाएं?',
-      'मुद्रास्फीति (महंगाई) को सरल भाषा में समझाएं',
+      'अगर मैं हर महीने ₹5,000 अधिक निवेश करूँ तो क्या होगा?',
+      'अगर मेरा वेतन बढ़कर ₹50,000 हो जाए तो क्या होगा?',
+      'अगर मैं अपनी SIP रोक दूँ और वह पैसा बचत में रखूँ तो क्या होगा?',
     ],
     Marathi: [
-      'SIP म्हणजे काय?',
-      'इमर्जन्सी फंड कसा तयार करावा?',
-      'महागाई म्हणजे काय ते सोप्या भाषेत सांगा',
+      'जर मी दरमहा ₹५,००० अधिक गुंतवले तर काय होईल?',
+      'जर माझा पगार वाढून ₹५०,००० झाला तर काय होईल?',
+      'जर मी माझी SIP थांबवून ते पैसे बचत केले तर काय होईल?',
     ],
   };
 
   const getFriendlyErrorMessage = () => {
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      if (language === 'Hindi') {
+        return 'आप ऑफ़लाइन हैं। निर्णय परीक्षण के लिए इंटरनेट कनेक्शन आवश्यक है। टर्म-ओ-पीडिया और कैलकुलेटर ऑफ़लाइन उपलब्ध हैं।';
+      }
+      if (language === 'Marathi') {
+        return 'आपण ऑफलाइन आहात. निर्णय तपासणीसाठी इंटरनेट कनेक्शन आवश्यक आहे. टर्म-ओ-पीडिया आणि कॅल्क्युलेटर ऑफलाइन उपलब्ध आहेत.';
+      }
+      return 'You appear to be offline. Decision testing requires an active internet connection. Term-O-Pedia and Calculators remain available offline.';
+    }
     if (language === 'Hindi') {
       return 'क्षमा करें, AI मेंटर से जुड़ने में समस्या हुई। कृपया API कुंजी जांचें और "पुनः प्रयास करें" पर टैप करें।';
     }
@@ -2485,10 +2510,10 @@ export const AIMentorView: React.FC = () => {
           <span>Personalized Financial Awareness · Responding in {language}</span>
         </div>
         <h1 className="text-2xl font-display font-bold text-feature-heading">
-          {t.mentor}
+          {t.mentorTitle || t.mentor}
         </h1>
         <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
-          Ask questions about Indian investing, SIPs, tax planning, emergency liquidity, or financial terms.
+          {t.mentorSubtitle}
         </p>
       </div>
 

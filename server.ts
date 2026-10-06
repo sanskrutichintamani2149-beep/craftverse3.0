@@ -5,7 +5,8 @@ import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
-import { maskSensitiveFinancialIdentifiers } from './src/utils/calculators';
+import { maskSensitiveFinancialIdentifiers, calculateCTCToTakeHome, calculateSIP } from './src/utils/calculators';
+import { calculateMentorDecisionScenario, ExtractedScenario, UserScenarioProfile } from './src/utils/mentorDecisionEngine';
 import { sanitizePii } from './src/utils/piiSanitizer';
 
 dotenv.config();
@@ -784,57 +785,21 @@ async function startServer() {
       const riskAppetite = resolvedContext.riskAppetite || 'Balanced';
       const dreamJob = resolvedContext.dreamJob || '';
 
-      // Tax calculations (only relevant for salaried employees)
-      const newTaxable = Math.max(0, annualCtc - 75000);
-      let newTax = 0;
-      if (newTaxable > 1200000) {
-        const slabs = [
-          { limit: 400000, rate: 0 },
-          { limit: 800000, rate: 0.05 },
-          { limit: 1200000, rate: 0.1 },
-          { limit: 1600000, rate: 0.15 },
-          { limit: 2000000, rate: 0.2 },
-          { limit: 2400000, rate: 0.25 },
-          { limit: Infinity, rate: 0.3 },
-        ];
-        let prev = 0;
-        for (const s of slabs) {
-          if (newTaxable > prev) {
-            newTax += (Math.min(newTaxable, s.limit) - prev) * s.rate;
-            prev = s.limit;
-          }
+      // Salaried: calculate take-home using standard calculateCTCToTakeHome
+      // Non-salaried: monthly take-home = annualCtc / 12
+      let monthlyInHand = 0;
+      if (hasCtc) {
+        if (isSalaried) {
+          const ctcCalc = calculateCTCToTakeHome({ annualCtc });
+          monthlyInHand = ctcCalc.monthlyTakeHome;
+        } else {
+          monthlyInHand = Math.round(annualCtc / 12);
         }
       }
-      const newRegimeTax = Math.round(newTax * 1.04);
-
-      const oldTaxable = Math.max(0, annualCtc - 50000 - 150000 - 50000);
-      let oldTax = 0;
-      if (oldTaxable > 500000) {
-        if (oldTaxable > 250000) oldTax += (Math.min(oldTaxable, 500000) - 250000) * 0.05;
-        if (oldTaxable > 500000) oldTax += (Math.min(oldTaxable, 1000000) - 500000) * 0.2;
-        if (oldTaxable > 1000000) oldTax += (oldTaxable - 1000000) * 0.3;
-      }
-      const oldRegimeTax = Math.round(oldTax * 1.04);
-      const annualTax = Math.min(newRegimeTax, oldRegimeTax);
-      const epfAndGratuity = isSalaried ? Math.round(annualCtc * 0.08) : 0;
-
-      // In-hand monthly calculation:
-      // Salaried: deducts tax and EPF
-      // Non-salaried: monthly income entered was stored as monthly * 12, so monthly take-home = annualCtc / 12
-      const monthlyInHand = hasCtc
-        ? isSalaried
-          ? Math.round(Math.max(0, annualCtc - annualTax - epfAndGratuity) / 12)
-          : Math.round(annualCtc / 12)
-        : 0;
 
       const monthlySurplus = (hasCtc && hasExpenses) ? Math.max(0, monthlyInHand - monthlyExpenses - monthlyEmi) : null;
-      const recommendedSip = monthlySurplus !== null ? Math.round(monthlySurplus * 0.6) : null;
       const emergencyTarget = (hasExpenses && (monthlyExpenses + monthlyEmi) > 0) ? (monthlyExpenses + monthlyEmi) * emergencyMonths : null;
       const emergencyShortfall = (emergencyTarget !== null && hasSavings) ? Math.max(0, emergencyTarget - currentSavings) : null;
-      const monthsToBuildEmergency =
-        emergencyShortfall !== null && emergencyShortfall > 0 && monthlySurplus !== null && monthlySurplus > 0
-          ? (emergencyShortfall / monthlySurplus).toFixed(1)
-          : emergencyShortfall === 0 ? '0 (Fully funded)' : 'Unknown';
 
       const missingFields: string[] = [];
       if (!hasCtc && (isSalaried || (incomeType !== 'Student' && incomeType !== 'Homemaker'))) {
@@ -848,53 +813,6 @@ async function startServer() {
       // PII Sanitization for user question and history
       const sanitizedPrompt = sanitizePii(promptText);
 
-      const systemInstruction = `You are DhanDrishti's AI financial mentor, a friendly, knowledgeable financial-literacy guide for Indian users.
-Base all your guidance directly on the user's specific Executive Dashboard and profile numbers provided below.
-
-Strict Guidance Rules:
-1. Income Profile Adaptation:
-   - User's Income Type: "${incomeType}".
-   ${
-     isSalaried
-       ? `- Salaried User: Address their Annual CTC, estimated monthly in-hand post-tax & EPF, and tax regime comparisons.`
-       : `- Non-Salaried User (${incomeType}): Do NOT mention salaried CTC, corporate EPF, or corporate tax regime comparisons (New vs Old salaried slabs). Refer to their earnings as monthly income, business income, agricultural/harvest earnings, or household budget.
-          - Emergency fund target is specifically ${emergencyMonths} months (₹${emergencyTarget !== null ? emergencyTarget.toLocaleString('en-IN') : 'target'}) to safeguard against variable or irregular cash flows.`
-   }
-2. Personalized Calculations:
-   - When the user asks investment questions (e.g., "What if I invest in this SIP tomorrow?"), directly check their real numbers:
-     * Check affordability against their monthly investable surplus (${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}` : 'NOT PROVIDED'}) and living expenses.
-     * Evaluate the effect on their Emergency Fund: note whether their ${emergencyMonths}-month buffer target is met or if there is a shortfall, and advise building emergency savings first if a gap exists.
-     * Factor in their Risk Appetite (${riskAppetite}) and their work/goals (${dreamJob || 'General Financial Health'}).
-     * Provide a clear, simple projection with clearly stated assumptions (such as expected rate of return e.g. 10-12% p.a. for equity SIP, duration, and monthly amount).
-3. Missing Data Honesty:
-   - If crucial financial data needed to answer the question is marked as "NOT PROVIDED" (such as income, expenses, or savings), explicitly state what numbers are missing instead of inventing or assuming figures.
-4. Language & Tone:
-   - Always respond in ${selectedLanguage} using simple words and short, clear sentences that any person without financial background can easily understand.
-   - For Hindi and Marathi, write your entire response strictly in Devanagari script (not Hinglish or Romanized script).
-5. Privacy & Data Minimization:
-   - Never reveal, guess, or ask for sensitive identifiers (account numbers, card numbers, PAN, Aadhaar, phone numbers, email addresses, passwords, tokens). Only discuss the general financial figures.
-6. Educational Disclaimer:
-   - Always include a brief note stating that projections are estimates and this is educational guidance, not licensed financial advice.
-7. Formatting:
-   - Highlight key figures and percentages in bold (e.g. **₹5,000**, **12% p.a.**). Keep explanations practical and structured.
-
-Financial Dashboard Context (Anonymized & Minimized):
-- Income Category: ${incomeType}
-- Occupation / Field: ${dreamJob || 'Not specified'}
-- Risk Profile: ${riskAppetite}
-- Location Context: ${resolvedContext?.location || 'India'}
-${isSalaried ? `- Annual CTC Package: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : 'NOT PROVIDED'}` : `- Annualized Income: ${hasCtc ? `₹${annualCtc.toLocaleString('en-IN')}` : '₹0'}`}
-- Monthly In-Hand / Take-Home Income: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/month` : '₹0'}
-- Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
-- Monthly Loan / Liability EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/month
-- Monthly Investable Surplus: ${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}/month` : 'NOT PROVIDED'}
-- Existing Monthly Investments: ₹${monthlyInvestments.toLocaleString('en-IN')}/month
-- Recommended Monthly SIP (60% of surplus): ${recommendedSip !== null ? `₹${recommendedSip.toLocaleString('en-IN')}/month` : 'NOT CALCULATED'}
-- Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
-- Emergency Fund Target (${emergencyMonths} Months): ${emergencyTarget !== null ? `₹${emergencyTarget.toLocaleString('en-IN')} (Shortfall: ₹${emergencyShortfall?.toLocaleString('en-IN')}, ~${monthsToBuildEmergency} months to reach target)` : 'NOT CALCULATED'}
-${isSalaried ? `- Tax Regime Comparison: New Regime Tax = ₹${newRegimeTax.toLocaleString('en-IN')}/yr vs Old Regime Tax = ₹${oldRegimeTax.toLocaleString('en-IN')}/yr (Recommended: ${newRegimeTax <= oldRegimeTax ? 'New Tax Regime' : 'Old Tax Regime'})` : `- Tax Regime: Not applicable for ${incomeType}`}
-- Missing Profile Information: ${missingFields.length > 0 ? missingFields.join(', ') : 'None (Full financial numbers available)'}`;
-
       const recentMessages = Array.isArray(history)
         ? history
             .filter((m: { role?: string; text?: string }) => m && typeof m.text === 'string' && m.text.trim())
@@ -904,6 +822,216 @@ ${isSalaried ? `- Tax Regime Comparison: New Regime Tax = ₹${newRegimeTax.toLo
               text: sanitizePii(m.text),
             }))
         : [];
+
+      // -------------------------------------------------------------
+      // PART A: FAST SCENARIO EXTRACTION (GEMINI_FALLBACK_MODEL, <=6s)
+      // -------------------------------------------------------------
+      const scenarioSchema = {
+        type: Type.OBJECT,
+        properties: {
+          is_scenario: {
+            type: Type.BOOLEAN,
+            description: 'True if user asks a what-if money decision or hypothetical scenario changing income, SIP, expense, EMI, loan, or investment. False for plain definitions, greetings, or stock picks.',
+          },
+          income_change: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              type: { type: Type.STRING, description: 'set_monthly, set_annual_ctc, percent_change, add_monthly, reduce_monthly' },
+              value: { type: Type.NUMBER, description: 'Numeric change or target amount' },
+              is_gross: { type: Type.BOOLEAN, description: 'True if monthly gross salary' },
+              is_annual: { type: Type.BOOLEAN, description: 'True if annual figure' },
+              specified_in_hand: { type: Type.BOOLEAN, description: 'True if explicitly in-hand' },
+            },
+          },
+          sip_change: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              type: { type: Type.STRING, description: 'add_monthly, reduce_monthly, set_monthly, stop, start, lump_sum' },
+              amount: { type: Type.NUMBER, description: 'Amount in INR' },
+            },
+          },
+          expense_change: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              type: { type: Type.STRING, description: 'add_monthly, reduce_monthly, set_monthly' },
+              amount: { type: Type.NUMBER, description: 'Amount in INR' },
+            },
+          },
+          emi_change: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              type: { type: Type.STRING, description: 'new_emi, changed_emi, pay_off' },
+              amount: { type: Type.NUMBER, description: 'Amount in INR' },
+            },
+          },
+          redirect_money: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              from: { type: Type.STRING, description: 'Source category to reduce (e.g. sip, shopping)' },
+              to: { type: Type.STRING, description: 'Target category to increase (e.g. savings, sip)' },
+              amount: { type: Type.NUMBER, description: 'Amount in INR' },
+            },
+          },
+          horizon_years: { type: Type.NUMBER, nullable: true, description: 'Horizon in years' },
+          return_rate: { type: Type.NUMBER, nullable: true, description: 'Annual return rate %' },
+        },
+        required: ['is_scenario'],
+      };
+
+      let extractedScenario: ExtractedScenario = { is_scenario: false };
+      try {
+        const extractorAbort = new AbortController();
+        const extractTimeout = setTimeout(() => extractorAbort.abort(), 6000);
+        const extractionPrompt = `You are a financial decision scenario extractor. Read the latest user question and recent context.
+Determine if the user is asking a "what-if" hypothetical money decision (changing income, SIP, expense, EMI, loan, or investment).
+If it is a follow-up question (e.g. "what about 7,000 instead?"), use recent context to know what was being changed.
+If it is a general definition (e.g. "What is SIP?"), stock tip ("Should I buy XYZ?"), or non-scenario, return is_scenario: false.
+
+Recent Messages:
+${recentMessages.slice(-4).map((m: { role: string; text: string }) => `${m.role === 'user' ? 'User' : 'Mentor'}: ${m.text}`).join('\n')}
+
+Latest Question: ${sanitizedPrompt}`;
+
+        const extractRes = await ai.models.generateContent({
+          model: GEMINI_FALLBACK_MODEL,
+          contents: extractionPrompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: scenarioSchema,
+            abortSignal: extractorAbort.signal,
+          },
+        });
+        clearTimeout(extractTimeout);
+        if (extractRes.text) {
+          extractedScenario = JSON.parse(extractRes.text) as ExtractedScenario;
+        }
+      } catch (extractErr) {
+        console.warn('[AI Mentor] Scenario extraction skipped or timed out:', (extractErr as Error)?.message || extractErr);
+        extractedScenario = { is_scenario: false };
+      }
+
+      let systemInstruction = '';
+
+      if (extractedScenario.is_scenario) {
+        const scenarioProfile: UserScenarioProfile = {
+          incomeType,
+          annualCtc: hasCtc ? annualCtc : null,
+          monthlyTakeHome: hasCtc ? monthlyInHand : null,
+          monthlyExpenses: hasExpenses ? monthlyExpenses : null,
+          monthlyEmi,
+          monthlyInvestments,
+          currentSavings: hasSavings ? currentSavings : null,
+          riskAppetite: (resolvedContext?.riskAppetite as any) || 'Balanced',
+        };
+
+        const comparison = calculateMentorDecisionScenario(scenarioProfile, extractedScenario);
+
+        if (comparison.missingFields.length > 0) {
+          systemInstruction = `You are DhanDrishti's AI Money Decision Mentor.
+The user is testing a financial decision, but their saved profile is missing required data: ${comparison.missingFields.join(', ')}.
+
+Rules:
+1. Clearly state EXACTLY which profile numbers are missing: ${comparison.missingFields.join(', ')}.
+2. Explain simply why these figures are required to test this money decision against their cash flow.
+3. Guide the user to complete their profile in the Executive Dashboard questions instead of guessing or calculating with imaginary numbers.
+4. Do NOT guess or calculate numbers.
+5. Respond in ${selectedLanguage} (Devanagari script for Hindi and Marathi).
+6. Educational disclaimer: this is educational guidance, not licensed financial advice.`;
+        } else {
+          const c = comparison.current;
+          const h = comparison.hypothetical;
+          const d = comparison.diff;
+
+          systemInstruction = `You are DhanDrishti's AI Money Decision Mentor. Your defined job is: "Testing a money decision against the user's own income, expenses, savings and goals, before they make it."
+
+Framework: Current profile -> Hypothetical change -> Impact -> Decision guidance.
+
+CRITICAL RULES:
+1. Use ONLY the code-calculated facts below. Do NOT invent, recalculate, or guess any financial numbers.
+2. Structure your response in ${selectedLanguage} in this EXACT FIXED ORDER (do not alter this order):
+   - **Now** (or वर्तमान स्थिति / सध्याची स्थिती in Hindi/Marathi): summarize their current numbers.
+   - **If you do this** (or यदि आप यह करते हैं / जर तुम्ही हे केले तर in Hindi/Marathi): describe the exact change proposed.
+   - **What changes** (or क्या बदलता है / काय बदलते in Hindi/Marathi): explain the before/after differences and impact on surplus, money left after SIP, emergency fund timeline, and SIP future value.
+   - **Trade-off and risk** (or फायदे-नुकसान और जोखिम / तडजोड आणि जोखीम in Hindi/Marathi): highlight the trade-offs (Affordability: ${h.isAffordable ? 'Affordable' : 'Not affordable / Deficit'}, Emergency Fund gap trend: ${d.emergencyGapTrend}).
+   - **What to check before deciding** (or निर्णय लेने से पहले क्या जांचें / निर्णय घेण्यापूर्वी काय तपासावे in Hindi/Marathi): practical checks to verify before proceeding.
+3. Bold key figures with ** ** (e.g., **₹${c.moneyLeftAfterSip.toLocaleString('en-IN')}**, **${c.monthsToCloseEmergency} months**, **${h.annualReturnRate}% p.a.**).
+4. State the modeling assumptions clearly (${comparison.assumptions.join('; ')}).
+5. Add one brief closing line: projections are educational estimates and this is educational guidance, not licensed financial advice.
+6. Language: Respond in ${selectedLanguage}. For Hindi and Marathi, write purely in Devanagari script.
+
+CODE-CALCULATED FACTS (GROUND TRUTH):
+[CURRENT SITUATION]:
+- Monthly Take-Home: ₹${c.monthlyTakeHome.toLocaleString('en-IN')}/mo
+- Monthly Expenses: ₹${c.monthlyExpenses.toLocaleString('en-IN')}/mo
+- Monthly Loan EMI: ₹${c.monthlyEmi.toLocaleString('en-IN')}/mo
+- Monthly Investable Surplus: ₹${c.monthlySurplus.toLocaleString('en-IN')}/mo
+- Existing Monthly SIP: ₹${c.monthlyInvestments.toLocaleString('en-IN')}/mo
+- Money Left Each Month After SIP: ₹${c.moneyLeftAfterSip.toLocaleString('en-IN')}/mo
+- Emergency Fund Target (${emergencyMonths} months): ₹${c.emergencyTarget.toLocaleString('en-IN')} (Current Savings: ₹${c.currentSavings.toLocaleString('en-IN')}, Shortfall: ₹${c.emergencyShortfall.toLocaleString('en-IN')})
+- Months to Close Emergency Shortfall: ${c.monthsToCloseEmergency} months
+- SIP Projected Value over ${c.horizonYears} yrs @ ${c.annualReturnRate}%: ₹${c.sipFutureValue.toLocaleString('en-IN')} (Invested: ₹${c.sipInvestedPrincipal.toLocaleString('en-IN')}, Returns: ₹${c.sipEstimatedReturns.toLocaleString('en-IN')})
+
+[HYPOTHETICAL SITUATION]:
+- Monthly Take-Home: ₹${h.monthlyTakeHome.toLocaleString('en-IN')}/mo
+- Monthly Expenses: ₹${h.monthlyExpenses.toLocaleString('en-IN')}/mo
+- Monthly Loan EMI: ₹${h.monthlyEmi.toLocaleString('en-IN')}/mo
+- Monthly Investable Surplus: ₹${h.monthlySurplus.toLocaleString('en-IN')}/mo
+- Monthly SIP: ₹${h.monthlyInvestments.toLocaleString('en-IN')}/mo
+- Money Left Each Month After SIP: ₹${h.moneyLeftAfterSip.toLocaleString('en-IN')}/mo
+- Emergency Fund Target: ₹${h.emergencyTarget.toLocaleString('en-IN')} (Shortfall: ₹${h.emergencyShortfall.toLocaleString('en-IN')})
+- Months to Close Emergency Shortfall: ${h.monthsToCloseEmergency} months
+- SIP Projected Value over ${h.horizonYears} yrs @ ${h.annualReturnRate}%: ₹${h.sipFutureValue.toLocaleString('en-IN')} (Invested: ₹${h.sipInvestedPrincipal.toLocaleString('en-IN')}, Returns: ₹${h.sipEstimatedReturns.toLocaleString('en-IN')})
+- Affordability: ${h.isAffordable ? 'Affordable (Surplus covers investments)' : 'Unfavorable / Deficit (Money left after SIP is negative)'}
+
+[KEY DIFFERENCES]:
+- Change in Monthly Take-Home: ₹${d.deltaTakeHome.toLocaleString('en-IN')}/mo
+- Change in Monthly Expenses: ₹${d.deltaExpenses.toLocaleString('en-IN')}/mo
+- Change in Monthly EMI: ₹${d.deltaEmi.toLocaleString('en-IN')}/mo
+- Change in Monthly Investable Surplus: ₹${d.deltaSurplus.toLocaleString('en-IN')}/mo
+- Change in Monthly SIP: ₹${d.deltaSip.toLocaleString('en-IN')}/mo
+- Change in Money Left After SIP: ₹${d.deltaMoneyLeftAfterSip.toLocaleString('en-IN')}/mo
+- Change in Months to Close Emergency Gap: ${d.deltaMonthsToCloseEmergency} months (Trend: ${d.emergencyGapTrend})
+- Change in ${h.horizonYears}-Yr SIP Future Value: ₹${d.deltaSipFutureValue.toLocaleString('en-IN')}`;
+        }
+      } else {
+        // Non-scenario query: strict scope rules (A2)
+        systemInstruction = `You are DhanDrishti's AI Money Decision Mentor. You specialize in testing money decisions against the user's own profile before they make them. You are NOT a general AI chatbot.
+
+Strict Scope Rules:
+1. Definition Questions (e.g., "What is SIP?", "What is an emergency fund?", "Explain inflation"):
+   - Give a brief 1-2 line simple definition.
+   - Explicitly point the user to Termopedia (the "Term-O-Pedia" feature in the app) for the complete detailed explanation, real-world examples, and videos.
+2. Investment & Product Recommendations:
+   - You do NOT recommend specific stocks, mutual funds, or products by name (e.g. "Buy Reliance" or "Invest in HDFC Top 100").
+   - You do NOT predict stock markets or promise/guarantee returns.
+   - Politely decline, remind the user that you help test money decisions against their personal budget and cash flow rather than recommending specific market products, and invite a what-if question (such as "What if I invest ₹5,000 more every month?").
+3. Tax & Legal Advice:
+   - You do not give individual legal or CA tax filing advice.
+4. Non-Financial / Off-Topic Questions:
+   - Politely explain that you are DhanDrishti's personal money-decision mentor, and invite a what-if financial question.
+5. General Financial Questions Grounded in Profile:
+   - Answer concisely using their saved profile numbers below.
+6. Language & Tone:
+   - Respond in ${selectedLanguage} (Devanagari script for Hindi and Marathi).
+   - Use simple words and bold key figures with ** **.
+   - Include a brief line that projections are educational estimates, not licensed financial advice.
+
+Saved Profile Context:
+- Income Type: ${incomeType}
+- Occupation / Field: ${dreamJob || 'Not specified'}
+- Risk Profile: ${riskAppetite}
+- Monthly In-Hand Take-Home: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/mo` : 'NOT PROVIDED'}
+- Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/mo` : 'NOT PROVIDED'}
+- Monthly EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/mo
+- Existing Monthly SIP: ₹${monthlyInvestments.toLocaleString('en-IN')}/mo
+- Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
+- Emergency Fund Target (${emergencyMonths} months): ${emergencyTarget !== null ? `₹${emergencyTarget.toLocaleString('en-IN')}` : 'NOT CALCULATED'}`;
+      }
 
       const conversationTranscript = recentMessages
         .map((m: { role: string; text: string }) => `${m.role === 'user' ? 'User' : 'DhanaDrishti Mentor'}: ${m.text}`)
@@ -1260,6 +1388,8 @@ Never include sensitive personal information in your answer, such as account num
           summary: { type: Type.STRING },
           key_fields: {
             type: Type.ARRAY,
+            description:
+              'Key fields and real values read directly from the document (e.g. Bank Name, Branch, Account Type, Account Opening Date, Occupation, Balances, Transactions, etc.). Sensitive identifiers (account number, customer ID, phone, email, PAN, Aadhaar, card number) MUST be in MASKED form with only the last 4 characters visible, e.g. Account No: XXXXXXXX3594.',
             items: {
               type: Type.OBJECT,
               properties: {
@@ -1323,25 +1453,38 @@ Never include sensitive personal information in your answer, such as account num
           }
 
           parts.push({
-            text: `Analyze this uploaded document/text (${fileName || 'financial document'}).
-Language Rules (CRITICAL):
-- DETECT THE LANGUAGE of the uploaded document/text: determine if it is written primarily in Marathi, Hindi, or English. If mixed, choose the dominant language.
-- Set detected_language to "Marathi", "Hindi", or "English".
-- Provide the ENTIRE explanation, summary, key fields, important terms, things to watch out for, and questions to ask in that DETECTED LANGUAGE.
-- If the document is in Marathi, the entire explanation MUST be in simple Marathi (Devanagari script).
-- If the document is in Hindi, the entire explanation MUST be in simple Hindi (Devanagari script).
-- If the document is in English, the entire explanation MUST be in simple English.
-- If the document language cannot be identified or is ambiguous, default to ${selectedLang}.
+            text: `Analyze this uploaded financial document (${fileName || 'document'}).
 
-Content Rules:
-- Explain in simple, plain words that a normal person with no finance knowledge can easily understand. Use short sentences and explain any financial term in plain words.
-- Explain the complete content of the document: what it is, its purpose, what the key figures and terms mean (balances, amounts, deductions, dates, fees, charges, benefits, due dates), and what the user should note or do next.
+KEY EXTRACTION & EXPLANATION INSTRUCTIONS:
+1. Carefully READ and EXTRACT all real values visibly printed or written in the document into "key_fields":
+   - For a bank passbook, bank statement, or account document, extract all readable details:
+     * Bank Name (e.g., State Bank of India, HDFC Bank, Bank of Maharashtra, ICICI Bank)
+     * Branch & IFSC Code / MICR Code
+     * Account Type (e.g., Savings Bank Account, Current Account, Salary Account)
+     * Account Number (MUST be MASKED with only last 4 visible, e.g., Account No: XXXXXXXX3594)
+     * Customer ID / CIF Number (MUST be MASKED with only last 4 visible, e.g., Customer ID: XXXXX1234)
+     * Account Opening Date / Issue Date
+     * Occupation / Nominee (if visible)
+     * Available Balance / Opening Balance / Closing Balance (in ₹ Rupees)
+     * Recent Transactions (date, withdrawal/deposit amount, balance after transaction)
+     * Interest Rate, Mode of Operation, or other visible terms
+   - For other financial documents (salary slip, Form 16, loan agreement, bill, policy), extract the actual real values visibly present (e.g., Basic Pay, Gross Salary, Net Pay, Deductions, Loan Amount, EMI, Interest Rate, Premium, Due Date).
+   - In "key_fields", explain each extracted field and its value in very simple English so a normal person with no finance background can easily understand it.
+
+PRIVACY & SENSITIVE IDENTIFIERS MASKING RULES (CRITICAL):
+2. Sensitive identifiers (account number, customer ID, phone, email, PAN, Aadhaar, card number) MUST be shown in MASKED form with ONLY the last 4 characters visible (for example: Account No: XXXXXXXX3594, Customer ID: XXXXX1234, Phone: XXXXXX3210, Email: XXXXXXX@domain.com, PAN: XXXXXX234F, Aadhaar: XXXXXXXX9012, Card Number: XXXXXXXXXXXX4444). Do NOT skip them and do NOT show them in full! Always include them in masked form.
+3. FORBIDDEN INFORMATION:
+   - Do NOT show the account holder's full name.
+   - Do NOT show the account holder's personal home address.
+   - Do NOT include any visual description of the photo/image (do NOT describe the camera angle, photo background, paper folds, lighting, or borders). Focus purely on the financial data.
+
+Language Rules:
+- Detect the primary language of the document ("Marathi", "Hindi", or "English").
+- Provide the explanation, summary, important terms, things to watch out for, and questions to ask in that detected language (defaulting to ${selectedLang}).
+- Explain in simple, plain words with short sentences.
 - All monetary amounts must be in Rupees (₹).
-- Handle all kinds of financial documents (bank passbook or statement, salary slip, Form 16, loan or EMI paper, insurance policy, mutual fund or SIP statement, receipts, tax documents, or pasted text).
-- Extract ONLY what is visibly readable in the file or text. If any value is unclear, write "not clearly readable" (or its translation in that language). Never invent numbers.
-- PRIVACY: NEVER include sensitive personal information such as account numbers, card numbers, Aadhaar, PAN, phone numbers, emails, addresses, customer IDs, or policy holder personal numbers. Refer to them generically, e.g. "your account".
-- If the image/file is blurry, blank, or too illegible to read any text, set status to "unreadable" and provide a polite message in summary in the detected language asking for a clearer, readable image or document.
-- If the image/file is not a financial document (e.g. photos of people, nature, logos, or unrelated objects), set status to "not_financial_document" and provide a polite message in summary in the detected language explaining that the file does not appear to be a financial document and asking to upload a financial document.`,
+- If the image/file is blurry, blank, or too illegible to read any text, set status to "unreadable" and provide a polite message in summary asking for a clearer, readable image or document.
+- If the image/file is not a financial document, set status to "not_financial_document" and provide a polite message in summary explaining that the file does not appear to be a financial document.`,
           });
 
           const response = await ai.models.generateContent({
@@ -1387,7 +1530,94 @@ Content Rules:
         }
       }
 
-      // Apply deterministic server-side privacy masking to all returned strings
+      // Helper specific to POST /api/document/explain route only:
+      // Masks value so only the last 4 characters are visible (e.g. XXXXXXXX3594).
+      const maskDocFieldValueToLast4 = (val: string): string => {
+        if (!val) return '';
+        const str = String(val).trim();
+        if (!str) return '';
+
+        // If it's an explanatory note like "not clearly readable", leave it as is
+        if (/^not\s+clearly\s+readable/i.test(str)) {
+          return str;
+        }
+
+        // If already masked with 4+ X's or asterisks leaving up to 4 alphanumeric chars at the end
+        if (/[X*]{4,}[A-Za-z0-9]{2,4}$/.test(str) || /^[X*x#\s\-_:.]+[A-Za-z0-9]{1,4}$/.test(str)) {
+          return str;
+        }
+
+        // If value has a prefix like "Account No: 123456783594"
+        const prefixMatch = str.match(/^([^:]+:\s*)(.+)$/);
+        if (prefixMatch) {
+          return prefixMatch[1] + maskDocFieldValueToLast4(prefixMatch[2]);
+        }
+
+        // If email address
+        if (str.includes('@')) {
+          const atIdx = str.indexOf('@');
+          const userPart = str.slice(0, atIdx);
+          const domainPart = str.slice(atIdx);
+          const visibleUser = userPart.slice(-4);
+          const maskedUser = 'X'.repeat(Math.max(4, userPart.length - visibleUser.length)) + visibleUser;
+          return maskedUser + domainPart;
+        }
+
+        // Extract alphanumeric characters
+        const alphanumeric = str.replace(/[^A-Za-z0-9]/g, '');
+        if (alphanumeric.length === 0) return str;
+        if (alphanumeric.length <= 4) {
+          return 'XXXX' + alphanumeric;
+        }
+
+        const last4 = alphanumeric.slice(-4);
+        const maskCount = Math.max(4, alphanumeric.length - 4);
+        return 'X'.repeat(maskCount) + last4;
+      };
+
+      // Label-based safety check: if label contains account, customer, phone, tel, email, PAN, Aadhaar or card
+      const isSensitiveDocFieldLabel = (label: string): boolean => {
+        const l = label.toLowerCase().trim();
+        // Skip non-sensitive metadata labels like "account type", "account opening date", "account status"
+        if (/account\s+(?:type|status|category|nature)/i.test(l)) return false;
+        if (/account\s+(?:opening\s+)?date/i.test(l)) return false;
+
+        return /(?:account|customer|phone|tel|email|pan|aadhaar|card)/i.test(l);
+      };
+
+      // Prohibited fields check: do not show account holder full name, home address, or photo description
+      const isProhibitedDocField = (label: string, value: string): boolean => {
+        const l = label.toLowerCase().trim();
+        const v = value.toLowerCase().trim();
+
+        // Account holder full name (keep bank name / branch name)
+        if (
+          /(?:account\s*holder|customer|holder|client|user|borrower|applicant)\s*name/i.test(l) ||
+          (l === 'name' && !/(?:bank|branch|company|employer)/i.test(v))
+        ) {
+          return true;
+        }
+
+        // Personal home address (keep bank branch address)
+        if (
+          /(?:home|residential|permanent|current|customer|holder)\s*address/i.test(l) ||
+          (l === 'address' && !/(?:bank|branch)/i.test(l))
+        ) {
+          return true;
+        }
+
+        // Visual description of the photo
+        if (
+          /(?:photo|image|picture|camera|lighting|background|fold|glare|blur|angle|border)\b/i.test(l) ||
+          /(?:photo of|image of|picture of|taken with|captured with|camera angle|lighting in photo)/i.test(v)
+        ) {
+          return true;
+        }
+
+        return false;
+      };
+
+      // Apply deterministic server-side privacy masking and label-based safety checks
       const explanation = {
         status:
           rawExplanation?.status === 'unreadable' ||
@@ -1402,10 +1632,27 @@ Content Rules:
         ),
         summary: maskSensitiveFinancialIdentifiers(String(rawExplanation?.summary || '')),
         key_fields: Array.isArray(rawExplanation?.key_fields)
-          ? rawExplanation.key_fields.map((kf: { label?: string; value?: string }) => ({
-              label: maskSensitiveFinancialIdentifiers(String(kf?.label || '')),
-              value: maskSensitiveFinancialIdentifiers(String(kf?.value || 'not clearly readable')),
-            }))
+          ? rawExplanation.key_fields
+              .filter((kf: { label?: string; value?: string }) => {
+                const label = String(kf?.label || '').trim();
+                const value = String(kf?.value || '').trim();
+                if (!label && !value) return false;
+                return !isProhibitedDocField(label, value);
+              })
+              .map((kf: { label?: string; value?: string }) => {
+                const rawLabel = String(kf?.label || '').trim();
+                let rawValue = String(kf?.value || 'not clearly readable').trim();
+
+                // Requirement 4: Label-based safety check inside this route only
+                if (isSensitiveDocFieldLabel(rawLabel)) {
+                  rawValue = maskDocFieldValueToLast4(rawValue);
+                }
+
+                return {
+                  label: maskSensitiveFinancialIdentifiers(rawLabel),
+                  value: maskSensitiveFinancialIdentifiers(rawValue),
+                };
+              })
           : [],
         important_terms_explained: Array.isArray(rawExplanation?.important_terms_explained)
           ? rawExplanation.important_terms_explained.map(

@@ -8,6 +8,7 @@ export interface YouTubeEmbedProps {
   channel?: string;
   language?: string;
   topic?: string;
+  localSrc?: string;
 }
 
 export const YouTubeEmbed: React.FC<YouTubeEmbedProps> = ({
@@ -17,6 +18,7 @@ export const YouTubeEmbed: React.FC<YouTubeEmbedProps> = ({
   channel,
   language,
   topic,
+  localSrc,
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
@@ -32,7 +34,17 @@ export const YouTubeEmbed: React.FC<YouTubeEmbedProps> = ({
     setHasError(!isValidFormat);
     setIframeLoaded(false);
 
+    if (localSrc) {
+      setIsChecking(false);
+      return;
+    }
+
     if (!isValidFormat) {
+      setIsChecking(false);
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setIsChecking(false);
       return;
     }
@@ -56,7 +68,45 @@ export const YouTubeEmbed: React.FC<YouTubeEmbedProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [cleanVideoId, isValidFormat]);
+  }, [cleanVideoId, isValidFormat, localSrc]);
+
+  if (localSrc) {
+    return (
+      <div className="space-y-2">
+        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-900 border border-[var(--border-subtle)]">
+          <video
+            src={localSrc}
+            controls
+            playsInline
+            className="w-full h-full object-contain bg-black"
+            title={title}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return (
+      <div className="theme-card rounded-2xl p-6 flex flex-col justify-between min-h-[220px]">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2 text-xs text-[var(--text-muted)]">
+            <span className="inline-flex items-center gap-1.5 font-medium text-amber-500">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              Offline Mode
+            </span>
+            {language && <span>{language}</span>}
+          </div>
+          <h3 className="text-base font-semibold text-[var(--text-primary)] leading-snug">
+            {title}
+          </h3>
+          <p className="text-sm text-[var(--text-secondary)]">
+            Video streaming requires an active internet connection. Definitions, flashcards, and quizzes remain fully functional offline.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (hasError || !isValidFormat) {
     return (

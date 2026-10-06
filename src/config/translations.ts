@@ -519,12 +519,12 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     verdictDepends: 'Verdict: Context Dependent',
     factExplanationTitle: 'Why This Matters',
 
-    mentorTitle: 'AI Financial Advisor',
-    mentorSubtitle: 'Ask any question about Indian mutual funds, SIPs, taxes, emergency funds, or budgeting.',
-    mentorGreeting: 'Namaste! I am your DhanaDrishti AI Mentor. Ask me any question about managing and growing your money!',
-    askMentorPlaceholder: 'Ask a question about mutual funds, SIPs, taxes, or budgeting... (Press Enter to send)',
+    mentorTitle: 'AI Money Decision Mentor',
+    mentorSubtitle: 'Test a money decision against your income, expenses, savings, and goals before you make it.',
+    mentorGreeting: 'Namaste! I am your DhanaDrishti AI Money Decision Mentor. Test any financial decision—such as changing your SIP, salary increase, new EMI, or expense change—against your real numbers before you make it!',
+    askMentorPlaceholder: 'Ask a what-if question (e.g., What if I invest ₹5,000 more every month?)... (Press Enter to send)',
     askButton: 'Ask',
-    mentorThinking: 'DhanaDrishti AI Mentor is thinking...',
+    mentorThinking: 'DhanaDrishti AI Mentor is calculating and evaluating...',
   },
 
   Hindi: {
@@ -776,12 +776,12 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     verdictDepends: 'फैसला: संदर्भ पर निर्भर',
     factExplanationTitle: 'तथ्य का स्पष्टीकरण',
 
-    mentorTitle: 'AI वित्तीय सलाहकार',
-    mentorSubtitle: 'म्यूचुअल फंड, SIP, टैक्स, बजट या आपातकालीन फंड से जुड़ा कोई भी प्रश्न पूछें।',
-    mentorGreeting: 'नमस्ते! मैं आपका DhanaDrishti AI मेंटर हूँ। धन प्रबंधन और निवेश से जुड़ा कोई भी प्रश्न पूछें!',
-    askMentorPlaceholder: 'म्यूचुअल फंड, SIP, टैक्स या बजट के बारे में पूछें... (Enter दबाएं)',
+    mentorTitle: 'AI वित्तीय निर्णय मेंटर',
+    mentorSubtitle: 'कोई भी वित्तीय निर्णय लेने से पहले उसे अपनी आय, खर्च, बचत और लक्ष्यों पर परखें।',
+    mentorGreeting: 'नमस्ते! मैं धनदृष्टि का AI मनी डिसीजन मेंटर हूँ। कोई भी वित्तीय निर्णय लेने से पहले—जैसे SIP बढ़ाना, वेतन वृद्धि, नई EMI या खर्च में बदलाव—उसे अपने वास्तविक आंकड़ों पर परखें!',
+    askMentorPlaceholder: 'कोई क्या-अगर प्रश्न पूछें (जैसे, अगर मैं हर महीने ₹5,000 अधिक निवेश करूँ तो?)... (Enter दबाएं)',
     askButton: 'पूछें',
-    mentorThinking: 'DhanaDrishti AI मेंटर विचार कर रहा है...',
+    mentorThinking: 'DhanaDrishti AI मेंटर विश्लेषण और गणना कर रहा है...',
   },
 
   Marathi: {
@@ -1033,12 +1033,12 @@ export const UI_TRANSLATIONS: Record<PreferredLanguage, TranslationDictionary> =
     verdictDepends: 'निकाल: संदर्भावर अवलंबून',
     factExplanationTitle: 'हे महत्त्वाचे का आहे',
 
-    mentorTitle: 'AI आर्थिक मार्गदर्शक',
-    mentorSubtitle: 'म्युच्युअल फंड, SIP, कर नियोजन, आपत्कालीन निधी याबद्दल काहीही विचारा.',
-    mentorGreeting: 'नमस्ते! मी आपला DhanaDrishti AI मार्गदर्शक आहे. पैशांचे नियोजन व गुंतवणुकीबद्दल कोणताही प्रश्न विचारा!',
-    askMentorPlaceholder: 'म्युच्युअल फंड, SIP, कर किंवा बजेटबद्दल विचारा... (Enter दाबा)',
+    mentorTitle: 'AI आर्थिक निर्णय मार्गदर्शक',
+    mentorSubtitle: 'कोणताही आर्थिक निर्णय घेण्यापूर्वी तो तुमच्या उत्पन्न, खर्च, बचत आणि ध्येयांवर तपासून पहा.',
+    mentorGreeting: 'नमस्ते! मी धनदृष्टीचा AI आर्थिक निर्णय मार्गदर्शक आहे. कोणताही पैशांचा निर्णय घेण्यापूर्वी—जसे की SIP वाढवणे, पगारवाढ, नवीन EMI किंवा खर्च बदल—तो तुमच्या प्रत्यक्ष आकडेवारीवर तपासून पहा!',
+    askMentorPlaceholder: "'जर मी असे केले तर' असा प्रश्न विचारा (उदा. जर मी दरमहा ₹५,००० अधिक गुंतवले तर?)... (Enter दाबा)",
     askButton: 'विचारा',
-    mentorThinking: 'DhanaDrishti AI मार्गदर्शक विचार करत आहे...',
+    mentorThinking: 'DhanaDrishti AI मार्गदर्शक विश्लेषण आणि गणना करत आहे...',
   },
 };
 

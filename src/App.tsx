@@ -28,11 +28,25 @@ const PROTECTED_VIEWS: AppView[] = [
 ];
 
 const AppShell: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, language } = useAuth();
   const [currentView, setCurrentView] = useState<AppView>('landing');
   const [termOPediaTab, setTermOPediaTab] = useState<TermOPediaTab>('terms');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [isOffline, setIsOffline] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? !navigator.onLine : false;
+  });
   const prevUserRef = useRef(user);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Support direct route links: /planner, /video-explainers, /flashcards, /quiz
   useEffect(() => {
@@ -171,6 +185,18 @@ const AppShell: React.FC = () => {
         )}
 
         <main className="flex-1 min-w-0">
+          {isOffline && (
+            <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-600 dark:text-amber-400 flex items-center justify-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>
+                {language === 'Hindi'
+                  ? 'आप ऑफ़लाइन हैं। टर्म-ओ-पीडिया, कैलकुलेटर और सहेजी गई सामग्री ऑफ़लाइन उपलब्ध हैं।'
+                  : language === 'Marathi'
+                  ? 'आपण ऑफलाइन आहात. टर्म-ओ-पीडिया, कॅल्क्युलेटर आणि सेव्ह केलेली माहिती ऑफलाइन उपलब्ध आहे.'
+                  : 'You are offline. Term-O-Pedia, Calculators, and Saved Content are available offline.'}
+              </span>
+            </div>
+          )}
           {currentView === 'landing' && <LandingView onNavigate={handleNavigate} />}
           {currentView === 'auth' && (
             <AuthView
