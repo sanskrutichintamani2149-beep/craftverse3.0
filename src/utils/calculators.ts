@@ -1,4 +1,4 @@
-import { TAX_RULES_FY2025_26, TaxSlab, VersionedTaxRules } from '../config/taxRulesConfig';
+import { TAX_RULES_FY2025_26, TaxSlab, VersionedTaxRules } from '../config/taxRulesConfig.ts';
 
 export interface SIPYearlyPoint {
   year: number;

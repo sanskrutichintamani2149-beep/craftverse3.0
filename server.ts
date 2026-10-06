@@ -4,9 +4,9 @@ import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
-import { maskSensitiveFinancialIdentifiers, calculateCTCToTakeHome, calculateSIP } from './src/utils/calculators';
-import { calculateMentorDecisionScenario, ExtractedScenario, UserScenarioProfile } from './src/utils/mentorDecisionEngine';
-import { sanitizePii } from './src/utils/piiSanitizer';
+import { maskSensitiveFinancialIdentifiers, calculateCTCToTakeHome, calculateSIP } from './src/utils/calculators.ts';
+import { calculateMentorDecisionScenario, ExtractedScenario, UserScenarioProfile } from './src/utils/mentorDecisionEngine.ts';
+import { sanitizePii } from './src/utils/piiSanitizer.ts';
 
 dotenv.config();
 
@@ -71,7 +71,7 @@ import {
   SavedCalculationRecord,
   SavedDocumentExplanationRecord,
   QuizAttemptRecord,
-} from './server/db';
+} from './server/db.ts';
 
 export type { IncomeType, UserProfileRecord };
 
@@ -195,6 +195,14 @@ export function createExpressApp() {
   const app = express();
 
   app.use(express.json({ limit: '15mb' }));
+
+  // Ensure /api prefix is normalized regardless of Vercel routing
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/_')) {
+      req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+    }
+    next();
+  });
 
   // Health check
   app.get('/api/health', (_req, res) => {

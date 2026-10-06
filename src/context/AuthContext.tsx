@@ -215,9 +215,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           theme,
         }),
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to sign up.');
+        throw new Error(data.error || (res.status >= 500 ? 'Server error occurred. Please try again.' : 'Failed to sign up.'));
       }
       localStorage.setItem(SESSION_TOKEN_KEY, data.token);
       try {
@@ -241,9 +246,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
       if (!res.ok) {
-        throw new Error(data.error || 'Invalid login credentials.');
+        throw new Error(data.error || (res.status >= 500 ? 'Server error occurred. Please try again.' : 'Invalid login credentials.'));
       }
       localStorage.setItem(SESSION_TOKEN_KEY, data.token);
       try {
@@ -294,7 +304,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
       if (res.status === 401) {
         setUnsavedDraft(payload);
         clearClientSessionOnly();
@@ -303,7 +318,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (!res.ok) {
-        throw new Error(data.error || 'Could not save profile changes.');
+        throw new Error(data.error || (res.status >= 500 ? 'Server error occurred. Please try again.' : 'Could not save profile changes.'));
       }
 
       setUser(data.user);

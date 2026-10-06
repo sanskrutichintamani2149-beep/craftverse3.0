@@ -1,4 +1,4 @@
-import { calculateCTCToTakeHome, calculateSIP } from './calculators';
+import { calculateCTCToTakeHome, calculateSIP } from './calculators.ts';
 
 export interface ExtractedScenario {
   is_scenario: boolean;
