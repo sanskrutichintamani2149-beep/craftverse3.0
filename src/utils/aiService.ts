@@ -1,6 +1,7 @@
 import { PreferredLanguage, IncomeType } from '../context/AuthContext';
 import { maskSensitiveFinancialIdentifiers } from './calculators';
 import { sanitizePii } from './piiSanitizer';
+import { getApiUrl } from './apiUrl';
 
 export interface DocumentExplanation {
   status?: 'success' | 'unreadable' | 'not_financial_document';
@@ -64,7 +65,7 @@ export const aiService = {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch('/api/document/explain', {
+        const res = await fetch(getApiUrl('/api/document/explain'), {
           method: 'POST',
           headers,
           signal: controller.signal,
@@ -167,7 +168,7 @@ export const aiService = {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch('/api/mentor/chat', {
+        const res = await fetch(getApiUrl('/api/mentor/chat'), {
           method: 'POST',
           headers,
           signal: controller.signal,

@@ -27,6 +27,9 @@ function getGeminiApiKey(): string | null {
     process.env.GOOGLE_API_KEY,
     process.env.VITE_GEMINI_API_KEY,
     process.env.API_KEY,
+    process.env.GEMINI_KEY,
+    process.env.GOOGLE_GENAI_API_KEY,
+    process.env.GEMINI_APIKEY,
   ];
 
   for (const raw of candidates) {
@@ -196,13 +199,15 @@ export function createExpressApp() {
 
   app.use(express.json({ limit: '15mb' }));
 
-  // Ensure /api prefix is normalized regardless of Vercel routing
-  app.use((req: Request, _res: Response, next: NextFunction) => {
-    if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/_')) {
-      req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-    }
-    next();
-  });
+  // Ensure /api prefix is normalized in Vercel serverless environment if stripped by rewrites
+  if (process.env.VERCEL) {
+    app.use((req: Request, _res: Response, next: NextFunction) => {
+      if (req.url && !req.url.startsWith('/api')) {
+        req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+      }
+      next();
+    });
+  }
 
   // Health check
   app.get('/api/health', (_req, res) => {
@@ -724,7 +729,7 @@ export function createExpressApp() {
 
   // POST /api/mentor/chat - Server-Side Gemini AI Financial Mentor
   const GEMINI_PRIMARY_MODEL = 'gemini-3.5-flash';
-  const GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
+  const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 
   app.post('/api/mentor/chat', async (req: Request, res: Response) => {
     const { message, history, userContext } = req.body || {};
@@ -829,215 +834,77 @@ export function createExpressApp() {
             }))
         : [];
 
-      // -------------------------------------------------------------
-      // PART A: FAST SCENARIO EXTRACTION (GEMINI_FALLBACK_MODEL, <=6s)
-      // -------------------------------------------------------------
-      const scenarioSchema = {
-        type: Type.OBJECT,
-        properties: {
-          is_scenario: {
-            type: Type.BOOLEAN,
-            description: 'True if user asks a what-if money decision or hypothetical scenario changing income, SIP, expense, EMI, loan, or investment. False for plain definitions, greetings, or stock picks.',
-          },
-          income_change: {
-            type: Type.OBJECT,
-            nullable: true,
-            properties: {
-              type: { type: Type.STRING, description: 'set_monthly, set_annual_ctc, percent_change, add_monthly, reduce_monthly' },
-              value: { type: Type.NUMBER, description: 'Numeric change or target amount' },
-              is_gross: { type: Type.BOOLEAN, description: 'True if monthly gross salary' },
-              is_annual: { type: Type.BOOLEAN, description: 'True if annual figure' },
-              specified_in_hand: { type: Type.BOOLEAN, description: 'True if explicitly in-hand' },
-            },
-          },
-          sip_change: {
-            type: Type.OBJECT,
-            nullable: true,
-            properties: {
-              type: { type: Type.STRING, description: 'add_monthly, reduce_monthly, set_monthly, stop, start, lump_sum' },
-              amount: { type: Type.NUMBER, description: 'Amount in INR' },
-            },
-          },
-          expense_change: {
-            type: Type.OBJECT,
-            nullable: true,
-            properties: {
-              type: { type: Type.STRING, description: 'add_monthly, reduce_monthly, set_monthly' },
-              amount: { type: Type.NUMBER, description: 'Amount in INR' },
-            },
-          },
-          emi_change: {
-            type: Type.OBJECT,
-            nullable: true,
-            properties: {
-              type: { type: Type.STRING, description: 'new_emi, changed_emi, pay_off' },
-              amount: { type: Type.NUMBER, description: 'Amount in INR' },
-            },
-          },
-          redirect_money: {
-            type: Type.OBJECT,
-            nullable: true,
-            properties: {
-              from: { type: Type.STRING, description: 'Source category to reduce (e.g. sip, shopping)' },
-              to: { type: Type.STRING, description: 'Target category to increase (e.g. savings, sip)' },
-              amount: { type: Type.NUMBER, description: 'Amount in INR' },
-            },
-          },
-          horizon_years: { type: Type.NUMBER, nullable: true, description: 'Horizon in years' },
-          return_rate: { type: Type.NUMBER, nullable: true, description: 'Annual return rate %' },
-        },
-        required: ['is_scenario'],
-      };
+      const moneyLeftAfterSip = monthlySurplus !== null ? (monthlySurplus - monthlyInvestments) : null;
+      const monthsToCloseEmergency = (emergencyShortfall !== null && monthlySurplus && monthlySurplus > 0)
+        ? Math.ceil(emergencyShortfall / monthlySurplus)
+        : (emergencyShortfall === 0 ? 0 : 'N/A');
 
-      let extractedScenario: ExtractedScenario = { is_scenario: false };
-      try {
-        const extractorAbort = new AbortController();
-        const extractTimeout = setTimeout(() => extractorAbort.abort(), 6000);
-        const extractionPrompt = `You are a financial decision scenario extractor. Read the latest user question and recent context.
-Determine if the user is asking a "what-if" hypothetical money decision (changing income, SIP, expense, EMI, loan, or investment).
-If it is a follow-up question (e.g. "what about 7,000 instead?"), use recent context to know what was being changed.
-If it is a general definition (e.g. "What is SIP?"), stock tip ("Should I buy XYZ?"), or non-scenario, return is_scenario: false.
+      const systemInstruction = `You are DhanDrishti's personal AI Financial Mentor for Indian users.
+Your role is: Testing money decisions, investments, expenses, and questions directly against the user's own financial dashboard and profile before they make them.
+You provide dynamic, meaningful, and deeply personalized financial mentorship tailored specifically to what the user asks and their real numbers.
+You NEVER give canned, repetitive, or dismissive responses. You do NOT refuse or give 1-line dismissals.
 
-Recent Messages:
-${recentMessages.slice(-4).map((m: { role: string; text: string }) => `${m.role === 'user' ? 'User' : 'Mentor'}: ${m.text}`).join('\n')}
-
-Latest Question: ${sanitizedPrompt}`;
-
-        const extractRes = await ai.models.generateContent({
-          model: GEMINI_FALLBACK_MODEL,
-          contents: extractionPrompt,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: scenarioSchema,
-            abortSignal: extractorAbort.signal,
-          },
-        });
-        clearTimeout(extractTimeout);
-        if (extractRes.text) {
-          extractedScenario = JSON.parse(extractRes.text) as ExtractedScenario;
-        }
-      } catch (extractErr) {
-        console.warn('[AI Mentor] Scenario extraction skipped or timed out:', (extractErr as Error)?.message || extractErr);
-        extractedScenario = { is_scenario: false };
-      }
-
-      let systemInstruction = '';
-
-      if (extractedScenario.is_scenario) {
-        const scenarioProfile: UserScenarioProfile = {
-          incomeType,
-          annualCtc: hasCtc ? annualCtc : null,
-          monthlyTakeHome: hasCtc ? monthlyInHand : null,
-          monthlyExpenses: hasExpenses ? monthlyExpenses : null,
-          monthlyEmi,
-          monthlyInvestments,
-          currentSavings: hasSavings ? currentSavings : null,
-          riskAppetite: (resolvedContext?.riskAppetite as any) || 'Balanced',
-        };
-
-        const comparison = calculateMentorDecisionScenario(scenarioProfile, extractedScenario);
-
-        if (comparison.missingFields.length > 0) {
-          systemInstruction = `You are DhanDrishti's AI Money Decision Mentor.
-The user is testing a financial decision, but their saved profile is missing required data: ${comparison.missingFields.join(', ')}.
-
-Rules:
-1. Clearly state EXACTLY which profile numbers are missing: ${comparison.missingFields.join(', ')}.
-2. Explain simply why these figures are required to test this money decision against their cash flow.
-3. Guide the user to complete their profile in the Executive Dashboard questions instead of guessing or calculating with imaginary numbers.
-4. Do NOT guess or calculate numbers.
-5. Respond in ${selectedLanguage} (Devanagari script for Hindi and Marathi).
-6. Educational disclaimer: this is educational guidance, not licensed financial advice.`;
-        } else {
-          const c = comparison.current;
-          const h = comparison.hypothetical;
-          const d = comparison.diff;
-
-          systemInstruction = `You are DhanDrishti's AI Money Decision Mentor. Your defined job is: "Testing a money decision against the user's own income, expenses, savings and goals, before they make it."
-
-Framework: Current profile -> Hypothetical change -> Impact -> Decision guidance.
-
-CRITICAL RULES:
-1. Use ONLY the code-calculated facts below. Do NOT invent, recalculate, or guess any financial numbers.
-2. Structure your response in ${selectedLanguage} in this EXACT FIXED ORDER (do not alter this order):
-   - **Now** (or वर्तमान स्थिति / सध्याची स्थिती in Hindi/Marathi): summarize their current numbers.
-   - **If you do this** (or यदि आप यह करते हैं / जर तुम्ही हे केले तर in Hindi/Marathi): describe the exact change proposed.
-   - **What changes** (or क्या बदलता है / काय बदलते in Hindi/Marathi): explain the before/after differences and impact on surplus, money left after SIP, emergency fund timeline, and SIP future value.
-   - **Trade-off and risk** (or फायदे-नुकसान और जोखिम / तडजोड आणि जोखीम in Hindi/Marathi): highlight the trade-offs (Affordability: ${h.isAffordable ? 'Affordable' : 'Not affordable / Deficit'}, Emergency Fund gap trend: ${d.emergencyGapTrend}).
-   - **What to check before deciding** (or निर्णय लेने से पहले क्या जांचें / निर्णय घेण्यापूर्वी काय तपासावे in Hindi/Marathi): practical checks to verify before proceeding.
-3. Bold key figures with ** ** (e.g., **₹${c.moneyLeftAfterSip.toLocaleString('en-IN')}**, **${c.monthsToCloseEmergency} months**, **${h.annualReturnRate}% p.a.**).
-4. State the modeling assumptions clearly (${comparison.assumptions.join('; ')}).
-5. Add one brief closing line: projections are educational estimates and this is educational guidance, not licensed financial advice.
-6. Language: Respond in ${selectedLanguage}. For Hindi and Marathi, write purely in Devanagari script.
-
-CODE-CALCULATED FACTS (GROUND TRUTH):
-[CURRENT SITUATION]:
-- Monthly Take-Home: ₹${c.monthlyTakeHome.toLocaleString('en-IN')}/mo
-- Monthly Expenses: ₹${c.monthlyExpenses.toLocaleString('en-IN')}/mo
-- Monthly Loan EMI: ₹${c.monthlyEmi.toLocaleString('en-IN')}/mo
-- Monthly Investable Surplus: ₹${c.monthlySurplus.toLocaleString('en-IN')}/mo
-- Existing Monthly SIP: ₹${c.monthlyInvestments.toLocaleString('en-IN')}/mo
-- Money Left Each Month After SIP: ₹${c.moneyLeftAfterSip.toLocaleString('en-IN')}/mo
-- Emergency Fund Target (${emergencyMonths} months): ₹${c.emergencyTarget.toLocaleString('en-IN')} (Current Savings: ₹${c.currentSavings.toLocaleString('en-IN')}, Shortfall: ₹${c.emergencyShortfall.toLocaleString('en-IN')})
-- Months to Close Emergency Shortfall: ${c.monthsToCloseEmergency} months
-- SIP Projected Value over ${c.horizonYears} yrs @ ${c.annualReturnRate}%: ₹${c.sipFutureValue.toLocaleString('en-IN')} (Invested: ₹${c.sipInvestedPrincipal.toLocaleString('en-IN')}, Returns: ₹${c.sipEstimatedReturns.toLocaleString('en-IN')})
-
-[HYPOTHETICAL SITUATION]:
-- Monthly Take-Home: ₹${h.monthlyTakeHome.toLocaleString('en-IN')}/mo
-- Monthly Expenses: ₹${h.monthlyExpenses.toLocaleString('en-IN')}/mo
-- Monthly Loan EMI: ₹${h.monthlyEmi.toLocaleString('en-IN')}/mo
-- Monthly Investable Surplus: ₹${h.monthlySurplus.toLocaleString('en-IN')}/mo
-- Monthly SIP: ₹${h.monthlyInvestments.toLocaleString('en-IN')}/mo
-- Money Left Each Month After SIP: ₹${h.moneyLeftAfterSip.toLocaleString('en-IN')}/mo
-- Emergency Fund Target: ₹${h.emergencyTarget.toLocaleString('en-IN')} (Shortfall: ₹${h.emergencyShortfall.toLocaleString('en-IN')})
-- Months to Close Emergency Shortfall: ${h.monthsToCloseEmergency} months
-- SIP Projected Value over ${h.horizonYears} yrs @ ${h.annualReturnRate}%: ₹${h.sipFutureValue.toLocaleString('en-IN')} (Invested: ₹${h.sipInvestedPrincipal.toLocaleString('en-IN')}, Returns: ₹${h.sipEstimatedReturns.toLocaleString('en-IN')})
-- Affordability: ${h.isAffordable ? 'Affordable (Surplus covers investments)' : 'Unfavorable / Deficit (Money left after SIP is negative)'}
-
-[KEY DIFFERENCES]:
-- Change in Monthly Take-Home: ₹${d.deltaTakeHome.toLocaleString('en-IN')}/mo
-- Change in Monthly Expenses: ₹${d.deltaExpenses.toLocaleString('en-IN')}/mo
-- Change in Monthly EMI: ₹${d.deltaEmi.toLocaleString('en-IN')}/mo
-- Change in Monthly Investable Surplus: ₹${d.deltaSurplus.toLocaleString('en-IN')}/mo
-- Change in Monthly SIP: ₹${d.deltaSip.toLocaleString('en-IN')}/mo
-- Change in Money Left After SIP: ₹${d.deltaMoneyLeftAfterSip.toLocaleString('en-IN')}/mo
-- Change in Months to Close Emergency Gap: ${d.deltaMonthsToCloseEmergency} months (Trend: ${d.emergencyGapTrend})
-- Change in ${h.horizonYears}-Yr SIP Future Value: ₹${d.deltaSipFutureValue.toLocaleString('en-IN')}`;
-        }
-      } else {
-        // Non-scenario query: strict scope rules (A2)
-        systemInstruction = `You are DhanDrishti's AI Money Decision Mentor. You specialize in testing money decisions against the user's own profile before they make them. You are NOT a general AI chatbot.
-
-Strict Scope Rules:
-1. Definition Questions (e.g., "What is SIP?", "What is an emergency fund?", "Explain inflation"):
-   - Give a brief 1-2 line simple definition.
-   - Explicitly point the user to Termopedia (the "Term-O-Pedia" feature in the app) for the complete detailed explanation, real-world examples, and videos.
-2. Investment & Product Recommendations:
-   - You do NOT recommend specific stocks, mutual funds, or products by name (e.g. "Buy Reliance" or "Invest in HDFC Top 100").
-   - You do NOT predict stock markets or promise/guarantee returns.
-   - Politely decline, remind the user that you help test money decisions against their personal budget and cash flow rather than recommending specific market products, and invite a what-if question (such as "What if I invest ₹5,000 more every month?").
-3. Tax & Legal Advice:
-   - You do not give individual legal or CA tax filing advice.
-4. Non-Financial / Off-Topic Questions:
-   - Politely explain that you are DhanDrishti's personal money-decision mentor, and invite a what-if financial question.
-5. General Financial Questions Grounded in Profile:
-   - Answer concisely using their saved profile numbers below.
-6. Language & Tone:
-   - Respond in ${selectedLanguage} (Devanagari script for Hindi and Marathi).
-   - Use simple words and bold key figures with ** **.
-   - Include a brief line that projections are educational estimates, not licensed financial advice.
-
-Saved Profile Context:
+USER'S VERIFIED FINANCIAL DASHBOARD & PROFILE:
 - Income Type: ${incomeType}
 - Occupation / Field: ${dreamJob || 'Not specified'}
-- Risk Profile: ${riskAppetite}
-- Monthly In-Hand Take-Home: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/mo` : 'NOT PROVIDED'}
-- Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/mo` : 'NOT PROVIDED'}
-- Monthly EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/mo
-- Existing Monthly SIP: ₹${monthlyInvestments.toLocaleString('en-IN')}/mo
-- Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'NOT PROVIDED'}
-- Emergency Fund Target (${emergencyMonths} months): ${emergencyTarget !== null ? `₹${emergencyTarget.toLocaleString('en-IN')}` : 'NOT CALCULATED'}`;
-      }
+- Risk Appetite: ${riskAppetite}
+- Monthly In-Hand Take-Home: ${hasCtc ? `₹${monthlyInHand.toLocaleString('en-IN')}/mo` : 'Not provided yet'}
+- Monthly Living Expenses: ${hasExpenses ? `₹${monthlyExpenses.toLocaleString('en-IN')}/mo` : 'Not provided yet'}
+- Monthly Loan EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/mo
+- Monthly Investable Surplus: ${monthlySurplus !== null ? `₹${monthlySurplus.toLocaleString('en-IN')}/mo` : 'Not calculated'}
+- Existing Monthly SIP / Investments: ₹${monthlyInvestments.toLocaleString('en-IN')}/mo
+- Money Left Each Month After SIP: ${moneyLeftAfterSip !== null ? `₹${moneyLeftAfterSip.toLocaleString('en-IN')}/mo` : 'Not calculated'}
+- Current Savings Corpus: ${hasSavings ? `₹${currentSavings.toLocaleString('en-IN')}` : 'Not provided yet'}
+- Emergency Fund Target (${emergencyMonths} months buffer): ${emergencyTarget !== null ? `₹${emergencyTarget.toLocaleString('en-IN')}` : 'Not calculated'}
+- Emergency Fund Shortfall: ${emergencyShortfall !== null ? `₹${emergencyShortfall.toLocaleString('en-IN')}` : 'Not calculated'}
+- Months to Fund Emergency Shortfall: ${monthsToCloseEmergency}
+
+MANDATORY RESPONSE STRUCTURE:
+Every single response MUST strictly follow this exact 5-section structure with these exact bold section headings in this exact order:
+
+${
+  selectedLanguage === 'Hindi'
+    ? `1. **Personalized Analysis (व्यक्तिगत विश्लेषण):**
+Analyze the user's existing financial dashboard and current financial situation using their actual figures above (income, expenses, EMI, surplus, savings, emergency fund status). If any figures are not provided in their profile, state what is known and what they should complete.
+2. **What-If Analysis (काल्पनिक परिदृश्य विश्लेषण):**
+Evaluate the hypothetical scenario, investment, or decision the user described (e.g., investing in mutual funds/SIP, taking a loan/EMI, altering spending, or testing an investment decision). If the user asked a general financial question, evaluate a realistic hypothetical scenario tailored to their numbers. Project what happens to their cash flow, savings rate, emergency safety, and potential future growth.
+3. **Comparison (तुलना):**
+Directly compare the user's current financial situation with the hypothetical scenario. Clearly detail the exact differences between the two (impact on monthly surplus, buffer left after SIP/investments, time to emergency fund safety, and long-term wealth creation).
+4. **Summary (सारांश):**
+Provide a concise, practical summary of the analysis and the suggested solution/strategy.
+5. **Final Conclusion (अंतिम निष्कर्ष):**
+Synthesize what the user asked, the definitive outcome of the analysis, and the AI Mentor's final actionable suggestion.`
+    : selectedLanguage === 'Marathi'
+    ? `1. **Personalized Analysis (वैयक्तिक विश्लेषण):**
+Analyze the user's existing financial dashboard and current financial situation using their actual figures above (income, expenses, EMI, surplus, savings, emergency fund status). If any figures are not provided in their profile, state what is known and what they should complete.
+2. **What-If Analysis (काल्पनिक परिस्थिती विश्लेषण):**
+Evaluate the hypothetical scenario, investment, or decision the user described (e.g., investing in mutual funds/SIP, taking a loan/EMI, altering spending, or testing an investment decision). If the user asked a general financial question, evaluate a realistic hypothetical scenario tailored to their numbers. Project what happens to their cash flow, savings rate, emergency safety, and potential future growth.
+3. **Comparison (तुलना):**
+Directly compare the user's current financial situation with the hypothetical scenario. Clearly detail the exact differences between the two (impact on monthly surplus, buffer left after SIP/investments, time to emergency fund safety, and long-term wealth creation).
+4. **Summary (सारांश):**
+Provide a concise, practical summary of the analysis and the suggested solution/strategy.
+5. **Final Conclusion (अंतिम निष्कर्ष):**
+Synthesize what the user asked, the definitive outcome of the analysis, and the AI Mentor's final actionable suggestion.`
+    : `1. **Personalized Analysis:**
+Analyze the user's existing financial dashboard and current financial situation using their actual figures above (income, expenses, EMI, surplus, savings, emergency fund status). If any figures are not provided in their profile, state what is known and what they should complete.
+2. **What-If Analysis:**
+Evaluate the hypothetical scenario, investment, or decision the user described (e.g., investing in mutual funds/SIP, taking a loan/EMI, altering spending, or testing an investment decision). If the user asked a general financial question, evaluate a realistic hypothetical scenario tailored to their numbers. Project what happens to their cash flow, savings rate, emergency safety, and potential future growth.
+3. **Comparison:**
+Directly compare the user's current financial situation with the hypothetical scenario. Clearly detail the exact differences between the two (impact on monthly surplus, buffer left after SIP/investments, time to emergency fund safety, and long-term wealth creation).
+4. **Summary:**
+Provide a concise, practical summary of the analysis and the suggested solution/strategy.
+5. **Final Conclusion:**
+Synthesize what the user asked, the definitive outcome of the analysis, and the AI Mentor's final actionable suggestion.`
+}
+
+CRITICAL RULES:
+- Language: Respond in ${selectedLanguage}. For Hindi and Marathi, write purely in clear, natural Devanagari script.
+- Format all currency figures in Indian Rupees (₹) with commas (e.g., ₹10,000, ₹50,000).
+- Bold key numbers, metrics, and comparisons using ** **.
+- Base all calculations on realistic Indian financial benchmarks (e.g. diversified equity mutual fund CAGR ~12% p.a., debt/FD ~6-7% p.a., emergency fund 6-9 months of living expenses).
+- Tone: Supportive, analytical, clear, and actionable. Do not use financial jargon without a brief, simple explanation.
+- Include a brief closing note that projections are educational estimates based on their inputs, not certified investment advice.
+- Security: Never ask for or output sensitive identifiers (passwords, PINs, full bank account numbers, PAN, Aadhaar).`;
 
       const conversationTranscript = recentMessages
         .map((m: { role: string; text: string }) => `${m.role === 'user' ? 'User' : 'DhanaDrishti Mentor'}: ${m.text}`)
@@ -1252,7 +1119,7 @@ Honesty & Accuracy Rules:
           parsed = await runCheckWithModel(GEMINI_FALLBACK_MODEL);
         } catch {
           const fallbackResponse = await ai.models.generateContent({
-            model: GEMINI_PRIMARY_MODEL,
+            model: GEMINI_FALLBACK_MODEL,
             contents: `${systemInstruction}\n\nEvaluate this statement: "${cleanStatement}"\nRespond ONLY with a valid JSON object containing keys: verdict ("Myth", "Fact", "Partly true / depends", or "Cannot verify"), short_answer, why, what_is_factual, what_depends_on_context, real_world_example, remember_this, common_mistake in ${selectedLang}.`,
           });
           parsed = parseRobustMythFactJson(fallbackResponse.text?.trim() || '');
@@ -1832,6 +1699,23 @@ async function startStandaloneServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    app.use('*', async (req: Request, res: Response, next: NextFunction) => {
+      if (req.originalUrl.startsWith('/api')) {
+        return next();
+      }
+      try {
+        const indexPath = path.join(process.cwd(), 'index.html');
+        if (fs.existsSync(indexPath)) {
+          let html = fs.readFileSync(indexPath, 'utf-8');
+          html = await vite.transformIndexHtml(req.originalUrl, html);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+        } else {
+          next();
+        }
+      } catch (e) {
+        next(e);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
